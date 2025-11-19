@@ -1,11 +1,10 @@
 # ==========================================================================
-# MIS-LBA Mixture Model Fitting Script (Robust Version)
+# MIS-LBA Mixture Model Fitting Script (Fixed & Robust)
 # ==========================================================================
 
 using Pkg
 
 # Ensure required packages are installed
-# Uncomment if running for the first time:
 # Pkg.add(["CSV", "DataFrames", "Glob", "Distributions", "SequentialSamplingModels", "Optim", "Statistics", "Random", "Plots"])
 
 using CSV
@@ -22,7 +21,6 @@ using Plots
 # 1. CONFIGURATION & PATHS
 # ==========================================================================
 
-# Define path relative to this script
 const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
 const FILE_PATTERN = "*.dat"
 const OUTPUT_CSV = "model_fit_results.csv"
@@ -31,6 +29,29 @@ const OUTPUT_PLOT = "model_fit_plot.png"
 # ==========================================================================
 # 2. DATA LOADING (Robust Parser)
 # ==========================================================================
+
+"""
+    parse_clean_float(val)
+    Safely parses a value that might be a number, a string "1", or a bracketed string "[1]".
+"""
+function parse_clean_float(val)
+    if ismissing(val) return missing end
+    if isa(val, Number) return Float64(val) end
+    
+    s = string(val)
+    # Remove brackets and whitespace
+    clean_s = replace(s, r"[\[\]\s]" => "")
+    if isempty(clean_s) || clean_s == "None" || clean_s == "nan"
+        return missing
+    end
+    
+    # Try parsing
+    try
+        return parse(Float64, clean_s)
+    catch
+        return missing
+    end
+end
 
 """
     parse_array_string(str)
@@ -46,14 +67,15 @@ end
 
 """
     read_psychopy_dat(filepath)
-    Reads a PsychoPy .dat file, skipping metadata headers.
+    Reads a PsychoPy .dat file, finding the correct header line.
 """
 function read_psychopy_dat(filepath)
-    # 1. Detect where the header starts
     header_line = 0
+    # Scan for header
     open(filepath) do file
         for (i, line) in enumerate(eachline(file))
-            if startswith(line, "ExperimentName") # The first column name
+            # Check for typical header columns
+            if occursin("ExperimentName", line) && occursin("RT", line)
                 header_line = i
                 break
             end
@@ -61,11 +83,10 @@ function read_psychopy_dat(filepath)
     end
 
     if header_line == 0
-        println("Warning: Could not find header in $filepath. Skipping.")
+        println("Warning: Could not find valid header in $filepath. Skipping.")
         return DataFrame()
     end
 
-    # 2. Read data starting from header_line
     try
         df = CSV.read(filepath, DataFrame; 
                       delim='\t', 
@@ -90,20 +111,21 @@ function load_and_process_data(path)
     for (i, file) in enumerate(files)
         dt = read_psychopy_dat(file)
         if !isempty(dt)
-            # Select only necessary columns to save memory
-            # We need: RT, CueValues, RespLoc, Practice (if exists)
-            cols_to_keep = ["RT", "CueValues", "RespLoc"]
-            if "Practice" in names(dt) push!(cols_to_keep, "Practice") end
-            
-            # Keep only existing columns
-            select!(dt, intersect(names(dt), cols_to_keep))
-            
+            # Keep relevant columns if they exist
+            cols_needed = ["RT", "CueValues", "RespLoc", "CueResponseValue", "Practice"]
+            cols_present = intersect(names(dt), cols_needed)
+            select!(dt, cols_present)
             push!(df_list, dt)
         end
-        if i % 5 == 0 print(".") end # Progress indicator
     end
-    println("\nMerging datasets...")
+    
+    if isempty(df_list)
+        error("No valid data could be read from files.")
+    end
+    
+    println("Merging datasets...")
     full_df = vcat(df_list...)
+    initial_rows = nrow(full_df)
 
     # --- CLEANING ---
     # 1. Remove Practice
@@ -114,25 +136,50 @@ function load_and_process_data(path)
     # 2. Parse CueValues
     full_df.ParsedRewards = parse_array_string.(full_df.CueValues)
 
-    # 3. Clean RT and Choice
-    # Remove missing/invalid RTs
-    filter!(row -> !ismissing(row.RT) && isa(row.RT, Number), full_df)
-    # Convert to Float64
-    full_df.RT = Float64.(full_df.RT)
-    
-    # Filter biologically plausible RTs (e.g., 0.05s to 2.0s)
-    filter!(row -> 0.05 < row.RT < 2.0, full_df)
+    # 3. Clean RT
+    # Handle string RTs like "[0.53]" or "0.53"
+    full_df.CleanRT = parse_clean_float.(full_df.RT)
+    filter!(row -> !ismissing(row.CleanRT) && 0.05 < row.CleanRT < 3.0, full_df)
 
-    # Parse Choice (RespLoc)
-    if "RespLoc" in names(full_df)
-        # Ensure RespLoc is numeric. PsychoPy sometimes saves "None" or "[]"
-        filter!(row -> !ismissing(row.RespLoc) && isa(row.RespLoc, Number), full_df)
-        full_df.Choice = Int.(full_df.RespLoc)
-    else
-        error("Critical: 'RespLoc' column missing.")
+    # 4. Determine Choice
+    # Try RespLoc first, then fallback to matching reward value
+    choices = Int[]
+    for row in eachrow(full_df)
+        c = 0
+        
+        # Strategy A: Check RespLoc
+        if "RespLoc" in names(full_df)
+            val = parse_clean_float(row.RespLoc)
+            if !ismissing(val)
+                c = Int(val)
+            end
+        end
+        
+        # Strategy B: Infer from Reward if RespLoc failed
+        if c == 0 && "CueResponseValue" in names(full_df)
+            val = parse_clean_float(row.CueResponseValue)
+            if !ismissing(val)
+                # Find index of this reward in the ParsedRewards vector
+                # Note: This assumes unique rewards or that the first match is correct
+                idx = findfirst(x -> x == val, row.ParsedRewards)
+                if !isnothing(idx)
+                    c = idx
+                end
+            end
+        end
+        
+        push!(choices, c)
     end
+    full_df.Choice = choices
+    
+    # Filter invalid choices
+    filter!(row -> row.Choice > 0 && row.Choice <= length(row.ParsedRewards), full_df)
 
-    println("Data loaded. Valid trials: $(nrow(full_df))")
+    println("Data loaded. Rows: $initial_rows -> Valid trials: $(nrow(full_df))")
+    if nrow(full_df) == 0
+        error("All trials were filtered out! Check column names and data format.")
+    end
+    
     return full_df
 end
 
@@ -144,37 +191,44 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
     # Unpack
     C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
     
-    # Constraints
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || 
-       p_exp<0 || p_exp>1 || sig_exp<=0
+    # Constraints (Strict check to prevent integrator errors)
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01 ||
+       p_exp<0 || p_exp>0.99 || sig_exp<=0
         return Inf
     end
 
     total_neg_ll = 0.0
     dist_express = Normal(mu_exp, sig_exp)
 
+    # Accumulate log-likelihood
     for i in 1:nrow(df)
-        rt = df.RT[i]
+        rt = df.CleanRT[i]
         choice = df.Choice[i]
         rewards = df.ParsedRewards[i]
 
-        # Validation
-        if choice < 1 || choice > length(rewards) continue end
-
         # --- MIS THEORY ---
         # Weight = 1 + w * Reward
+        # We add 1.0 to base weight to ensure drift > 0 even for 0 reward
         weights = 1.0 .+ (w_slope .* rewards)
         rel_weights = weights ./ sum(weights)
         drift_rates = C .* rel_weights
 
         # --- LBA ---
-        # b = A + k (k ensures b > A)
+        # Parameters: ν=drift, A=max start, k=b-A, τ=non-decision
+        # Note: A must be strictly positive for LBA
         lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
         
         lik_reg = 0.0
-        try
-            lik_reg = pdf(lba, (choice=choice, rt=rt))
-        catch
+        # LBA density is 0 if RT < t0. We handle this gracefully.
+        if rt > t0
+            try
+                # pdf(d, (choice, rt))
+                lik_reg = pdf(lba, (choice=choice, rt=rt))
+                if isnan(lik_reg) || isinf(lik_reg) lik_reg = 1e-10 end
+            catch
+                lik_reg = 1e-10
+            end
+        else
             lik_reg = 1e-10
         end
 
@@ -185,6 +239,7 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
         if lik_tot <= 1e-20 lik_tot = 1e-20 end
         total_neg_ll -= log(lik_tot)
     end
+    
     return total_neg_ll
 end
 
@@ -197,18 +252,24 @@ function run_analysis()
     data = load_and_process_data(DATA_PATH)
     
     # 2. Optimize
-    # [C, w, A, k, t0, p_exp, mu_exp, sig_exp]
-    lower = [1.0, 0.0, 0.01, 0.01, 0.01, 0.0,  0.05, 0.001]
-    upper = [30.0,10.0, 1.0,  1.0,  0.5,  0.8,  0.20, 0.1]
-    x0    = [10.0, 1.0, 0.3,  0.3,  0.1,  0.2,  0.10, 0.01] # Start mu_exp at 100ms
+    # Params: [C, w, A, k, t0, p_exp, mu_exp, sig_exp]
+    lower = [1.0, 0.0, 0.01, 0.05, 0.05, 0.0,  0.05, 0.001]
+    upper = [30.0,10.0, 1.0,  1.0,  0.6,  0.8,  0.20, 0.1]
+    x0    = [10.0, 1.0, 0.3,  0.3,  0.2,  0.2,  0.10, 0.02]
 
-    println("Fitting model...")
+    println("Fitting model (this may take a minute)...")
     func = x -> mis_lba_mixture_loglike(x, data)
-    res = optimize(func, lower, upper, x0, Fminbox(BFGS()); 
-                   autodiff=:forward, time_limit=600.0)
+    
+    # FIX: Pass time_limit inside Optim.Options
+    opt_options = Optim.Options(time_limit = 600.0, show_trace = true, show_every=5)
+    
+    res = optimize(func, lower, upper, x0, Fminbox(BFGS()), opt_options; 
+                   autodiff=:forward)
     
     best = Optim.minimizer(res)
+    println("\n--- Optimization Complete ---")
     println("Best Params: $best")
+    println("Min LogLikelihood: $(Optim.minimum(res))")
 
     # 3. Save Results
     results_df = DataFrame(
@@ -221,43 +282,50 @@ function run_analysis()
     # 4. Visualization
     println("Generating plot...")
     
-    # Histogram of data
-    histogram(data.RT, normalize=true, label="Data", alpha=0.5, bins=50,
-              xlabel="Reaction Time (s)", ylabel="Density", title="MIS-LBA Fit")
+    # Histogram of Observed RT
+    histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
+              xlabel="Reaction Time (s)", ylabel="Density", title="MIS-LBA Mixture Fit",
+              color=:blue, legend=:topright)
     
-    # Model Prediction Curve
-    # We simulate the aggregate prediction by averaging model PDF across all trials
-    t_grid = range(0.0, 1.5, length=200)
+    # Simulate Model Curve
+    # We calculate the 'average' predicted PDF across all trials
+    t_grid = range(0.05, 1.5, length=200)
     y_pred = zeros(length(t_grid))
     
-    # Use a subset of trials to estimate the average predictive curve (for speed)
-    n_samples = min(500, nrow(data))
+    # Use a random subset of trials to approximate the curve
+    n_samples = min(200, nrow(data))
     subset_indices = rand(1:nrow(data), n_samples)
     
-    for t_idx in 1:length(t_grid)
-        t = t_grid[t_idx]
-        avg_lik = 0.0
+    for (j, t) in enumerate(t_grid)
+        avg_pdf = 0.0
         for i in subset_indices
             rewards = data.ParsedRewards[i]
-            # Re-calculate drift for this trial
+            
+            # Reconstruct parameters
             ws = 1.0 .+ (best[2] .* rewards)
             vs = best[1] .* (ws ./ sum(ws))
             
-            # LBA Probability (summed over any choice for aggregate RT)
+            # LBA PDF (summed over all choices)
             lba = LBA(ν=vs, A=best[3], k=best[4], τ=best[5])
-            # Probability of responding *anything* at time t
-            # Simple way: sum pdf over all choices
-            lik_reg_t = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
             
-            # Express Probability
-            lik_exp_t = pdf(Normal(best[7], best[8]), t)
+            # Check if t > t0 for LBA
+            lba_dens = 0.0
+            if t > best[5]
+                # Sum pdf of all possible choices
+                lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
+            end
             
-            avg_lik += (best[6]*lik_exp_t + (1-best[6])*lik_reg_t)
+            # Express PDF
+            exp_dens = pdf(Normal(best[7], best[8]), t)
+            
+            # Mixture
+            avg_pdf += (best[6] * exp_dens) + ((1-best[6]) * lba_dens)
         end
-        y_pred[t_idx] = avg_lik / n_samples
+        y_pred[j] = avg_pdf / n_samples
     end
     
-    plot!(t_grid, y_pred, label="Model", linewidth=3, color=:red)
+    plot!(t_grid, y_pred, label="Model Prediction", linewidth=3, color=:red)
+    
     savefig(OUTPUT_PLOT)
     println("Saved plot to $OUTPUT_PLOT")
 end
