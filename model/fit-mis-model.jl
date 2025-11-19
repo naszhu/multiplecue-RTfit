@@ -55,14 +55,21 @@ end
 
 """
     parse_array_string(str)
-    Parses "[1, 2, 3]" -> [1.0, 2.0, 3.0]
+    Parses "[1, 2, 3]" -> [1.0, 2.0, 3.0] or "0410" -> [0.0, 4.0, 1.0, 0.0]
 """
 function parse_array_string(str)
     if ismissing(str) return Float64[] end
     s = string(str)
-    clean_str = replace(s, r"[\[\]]" => "")
+    clean_str = replace(s, r"[\[\]\s]" => "")
     if isempty(strip(clean_str)) return Float64[] end
-    return parse.(Float64, split(clean_str, ","))
+
+    # Check if comma-separated (e.g., "1,2,3,4") or digit string (e.g., "0410")
+    if occursin(",", clean_str)
+        return parse.(Float64, split(clean_str, ","))
+    else
+        # Parse as individual digits - convert each Char to String first
+        return parse.(Float64, string.(collect(clean_str)))
+    end
 end
 
 """
@@ -70,27 +77,19 @@ end
     Reads a PsychoPy .dat file, finding the correct header line.
 """
 function read_psychopy_dat(filepath)
-    header_line = 0
-    # Scan for header
-    open(filepath) do file
-        for (i, line) in enumerate(eachline(file))
-            # Check for typical header columns
-            if occursin("ExperimentName", line) && occursin("RT", line)
-                header_line = i
-                break
-            end
-        end
-    end
+    # Find header line by reading all lines first
+    lines = readlines(filepath)
+    header_line = findfirst(l -> occursin("ExperimentName", l) && occursin("RT", l), lines)
 
-    if header_line == 0
+    if isnothing(header_line)
         println("Warning: Could not find valid header in $filepath. Skipping.")
         return DataFrame()
     end
 
     try
-        df = CSV.read(filepath, DataFrame; 
-                      delim='\t', 
-                      header=header_line, 
+        df = CSV.read(filepath, DataFrame;
+                      delim='\t',
+                      header=header_line,
                       silencewarnings=true)
         return df
     catch e
@@ -104,34 +103,32 @@ function load_and_process_data(path)
     if isempty(files)
         error("No data files found in $path")
     end
-    
-    println("Found $(length(files)) files. Processing...")
-    
+
+    # Filter out practice files based on filename pattern
+    non_practice_files = filter(f -> !occursin("-Prac-", f), files)
+
+    println("Found $(length(files)) files total, $(length(non_practice_files)) non-practice files. Processing...")
+
     df_list = DataFrame[]
-    for (i, file) in enumerate(files)
+    for (i, file) in enumerate(non_practice_files)
         dt = read_psychopy_dat(file)
         if !isempty(dt)
             # Keep relevant columns if they exist
-            cols_needed = ["RT", "CueValues", "RespLoc", "CueResponseValue", "Practice"]
+            cols_needed = ["RT", "CueValues", "RespLoc", "PointTargetResponse", "CueResponseValue"]
             cols_present = intersect(names(dt), cols_needed)
             select!(dt, cols_present)
             push!(df_list, dt)
         end
     end
-    
+
     if isempty(df_list)
         error("No valid data could be read from files.")
     end
-    
+
     println("Merging datasets...")
     full_df = vcat(df_list...)
     initial_rows = nrow(full_df)
-
-    # --- CLEANING ---
-    # 1. Remove Practice
-    if "Practice" in names(full_df)
-        filter!(row -> row.Practice != "Y", full_df)
-    end
+    println("Total rows after merging: $initial_rows")
 
     # 2. Parse CueValues
     full_df.ParsedRewards = parse_array_string.(full_df.CueValues)
@@ -139,23 +136,33 @@ function load_and_process_data(path)
     # 3. Clean RT
     # Handle string RTs like "[0.53]" or "0.53"
     full_df.CleanRT = parse_clean_float.(full_df.RT)
+    before_rt_filter = nrow(full_df)
     filter!(row -> !ismissing(row.CleanRT) && 0.05 < row.CleanRT < 3.0, full_df)
+    println("After RT filtering: $(nrow(full_df)) (removed $(before_rt_filter - nrow(full_df)))")
 
     # 4. Determine Choice
-    # Try RespLoc first, then fallback to matching reward value
+    # Try PointTargetResponse first, then RespLoc, then fallback to matching reward value
     choices = Int[]
     for row in eachrow(full_df)
         c = 0
-        
-        # Strategy A: Check RespLoc
-        if "RespLoc" in names(full_df)
+
+        # Strategy A: Check PointTargetResponse (most reliable)
+        if "PointTargetResponse" in names(full_df)
+            val = parse_clean_float(row.PointTargetResponse)
+            if !ismissing(val)
+                c = Int(val)
+            end
+        end
+
+        # Strategy B: Check RespLoc if PointTargetResponse failed
+        if c == 0 && "RespLoc" in names(full_df)
             val = parse_clean_float(row.RespLoc)
             if !ismissing(val)
                 c = Int(val)
             end
         end
-        
-        # Strategy B: Infer from Reward if RespLoc failed
+
+        # Strategy C: Infer from Reward if both failed
         if c == 0 && "CueResponseValue" in names(full_df)
             val = parse_clean_float(row.CueResponseValue)
             if !ismissing(val)
@@ -167,15 +174,17 @@ function load_and_process_data(path)
                 end
             end
         end
-        
+
         push!(choices, c)
     end
     full_df.Choice = choices
-    
-    # Filter invalid choices
-    filter!(row -> row.Choice > 0 && row.Choice <= length(row.ParsedRewards), full_df)
 
-    println("Data loaded. Rows: $initial_rows -> Valid trials: $(nrow(full_df))")
+    # Filter invalid choices
+    before_choice_filter = nrow(full_df)
+    filter!(row -> row.Choice > 0 && row.Choice <= length(row.ParsedRewards), full_df)
+    println("After choice filtering: $(nrow(full_df)) (removed $(before_choice_filter - nrow(full_df)))")
+
+    println("\nData loaded. Total rows: $initial_rows -> Valid trials: $(nrow(full_df))")
     if nrow(full_df) == 0
         error("All trials were filtered out! Check column names and data format.")
     end
