@@ -1,13 +1,12 @@
 # ==========================================================================
-# MIS-LBA Mixture Model Fitting Script
+# MIS-LBA Mixture Model Fitting Script (Robust Version)
 # ==========================================================================
-# This script fits a Mixture Model (Express Saccades + Linear Ballistic Accumulator)
-# to reaction time data from the MIS paradigm. 
-#
-# The Drift Rates (v) of the LBA are constrained by the MIS theory:
-# v = Capacity * (Weight / Sum(Weights))
-# where Weight is a function of the Reward Value presented on screen.
-# ==========================================================================
+
+using Pkg
+
+# Ensure required packages are installed
+# Uncomment if running for the first time:
+# Pkg.add(["CSV", "DataFrames", "Glob", "Distributions", "SequentialSamplingModels", "Optim", "Statistics", "Random", "Plots"])
 
 using CSV
 using DataFrames
@@ -17,425 +16,250 @@ using SequentialSamplingModels
 using Optim
 using Statistics
 using Random
+using Plots
 
 # ==========================================================================
 # 1. CONFIGURATION & PATHS
 # ==========================================================================
 
-# Define the relative path to the data
-# Root is assumed to be one level up from 'model' folder
+# Define path relative to this script
 const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
 const FILE_PATTERN = "*.dat"
+const OUTPUT_CSV = "model_fit_results.csv"
+const OUTPUT_PLOT = "model_fit_plot.png"
 
 # ==========================================================================
-# 2. DATA LOADING & PREPROCESSING
+# 2. DATA LOADING (Robust Parser)
 # ==========================================================================
 
 """
     parse_array_string(str)
-
-Parses a string representation of an array (e.g., "[1, 2, 3, 4]") into a Julia Vector{Float64}.
-Handles the specific format found in the PsychoPy data files.
+    Parses "[1, 2, 3]" -> [1.0, 2.0, 3.0]
 """
-function parse_array_string(str::AbstractString)
-    # Remove brackets and extra whitespace
-    clean_str = replace(str, r"[\[\]]" => "")
-    if isempty(clean_str)
-        return Float64[]
-    end
-    # Split by comma and parse
+function parse_array_string(str)
+    if ismissing(str) return Float64[] end
+    s = string(str)
+    clean_str = replace(s, r"[\[\]]" => "")
+    if isempty(strip(clean_str)) return Float64[] end
     return parse.(Float64, split(clean_str, ","))
 end
 
 """
-    find_header_and_columns(file)
-
-Finds the header line and identifies column indices for RT, RespLoc, CueValues, and Practice.
-Returns (header_line, col_indices_dict).
+    read_psychopy_dat(filepath)
+    Reads a PsychoPy .dat file, skipping metadata headers.
 """
-function find_header_and_columns(file)
-    open(file, "r") do io
-        line_num = 0
-        for line in eachline(io)
-            line_num += 1
-            # Look for a line that has tab-separated values and contains column names we expect
-            if occursin('\t', line) && 
-               (occursin("RT", line) || occursin("RespLoc", line) || occursin("CueValues", line))
-                # Parse header to find column indices
-                headers = split(line, '\t')
-                col_indices = Dict{String, Int}()
-                for (idx, header) in enumerate(headers)
-                    header = strip(header)
-                    if header in ["RT", "RespLoc", "CueValues", "Practice"]
-                        col_indices[header] = idx
-                    end
-                end
-                return (line_num, col_indices)
+function read_psychopy_dat(filepath)
+    # 1. Detect where the header starts
+    header_line = 0
+    open(filepath) do file
+        for (i, line) in enumerate(eachline(file))
+            if startswith(line, "ExperimentName") # The first column name
+                header_line = i
+                break
             end
         end
-        return (1, Dict{String, Int}())  # Default if not found
     end
-end
 
-"""
-    process_single_file(file)
+    if header_line == 0
+        println("Warning: Could not find header in $filepath. Skipping.")
+        return DataFrame()
+    end
 
-Processes a single data file: loads, filters, and returns cleaned DataFrame.
-Uses streaming approach to only read needed columns for memory efficiency.
-"""
-function process_single_file(file)
+    # 2. Read data starting from header_line
     try
-        # Find header and column indices
-        header_line, col_indices = find_header_and_columns(file)
-        
-        if isempty(col_indices) || !("RT" in keys(col_indices)) || 
-           !("RespLoc" in keys(col_indices)) || !("CueValues" in keys(col_indices))
-            println("Warning: Required columns not found in $file")
-            return nothing
-        end
-        
-        # Read file line by line, extracting only needed columns
-        rows = []
-        open(file, "r") do io
-            # Skip to data rows (after header)
-            for _ in 1:header_line
-                readline(io)
-            end
-            
-            # Read data rows
-            for line in eachline(io)
-                fields = split(line, '\t')
-                if length(fields) >= maximum(values(col_indices))
-                    row = Dict{String, Any}()
-                    if "RT" in keys(col_indices)
-                        row["RT"] = fields[col_indices["RT"]]
-                    end
-                    if "RespLoc" in keys(col_indices)
-                        row["RespLoc"] = fields[col_indices["RespLoc"]]
-                    end
-                    if "CueValues" in keys(col_indices)
-                        row["CueValues"] = fields[col_indices["CueValues"]]
-                    end
-                    if "Practice" in keys(col_indices)
-                        row["Practice"] = fields[col_indices["Practice"]]
-                    end
-                    push!(rows, row)
-                end
-            end
-        end
-        
-        if isempty(rows)
-            return nothing
-        end
-        
-        # Convert to DataFrame
-        dt = DataFrame(rows)
-        
-        # Early filtering to reduce memory: Remove practice trials
-        if "Practice" in names(dt)
-            filter!(row -> row.Practice != "Y", dt)
-        end
-        
-        # Filter valid RTs early and convert to Float64
-        filter!(row -> !ismissing(row.RT) && row.RT != "", dt)
-        # Convert RT to Float64, handling string values
-        rt_values = Float64[]
-        for val in dt.RT
-            try
-                push!(rt_values, parse(Float64, string(val)))
-            catch
-                push!(rt_values, NaN)
-            end
-        end
-        dt.RT = rt_values
-        filter!(row -> !isnan(row.RT) && 0.05 < row.RT < 2.0, dt)
-        
-        # Skip if no valid rows remain
-        if nrow(dt) == 0
-            return nothing
-        end
-        
-        # Parse CueValues (The Rewards)
-        dt.ParsedRewards = parse_array_string.(dt.CueValues)
-        
-        # Determine Choice Index
-        if "RespLoc" in names(dt)
-            choice_values = Int[]
-            for val in dt.RespLoc
-                try
-                    push!(choice_values, parse(Int, string(val)))
-                catch
-                    push!(choice_values, 0)  # Invalid choice
-                end
-            end
-            dt.Choice = choice_values
-            filter!(row -> row.Choice >= 1 && row.Choice <= 4, dt)  # Valid choices are 1-4
-        else
-            error("Column 'RespLoc' not found in file $file")
-        end
-        
-        # Only keep necessary columns to reduce memory
-        required_cols = ["RT", "Choice", "ParsedRewards"]
-        if "Practice" in names(dt)
-            required_cols = ["RT", "Choice", "ParsedRewards", "Practice"]
-        end
-        select!(dt, required_cols)
-        
-        return dt
+        df = CSV.read(filepath, DataFrame; 
+                      delim='\t', 
+                      header=header_line, 
+                      silencewarnings=true)
+        return df
     catch e
-        println("Warning: Could not process file $file. Error: $e")
-        return nothing
+        println("Error reading $filepath: $e")
+        return DataFrame()
     end
 end
 
-"""
-    load_and_process_data(path)
-
-Loads all .dat files from the directory, processes them incrementally, and returns cleaned data.
-Memory-efficient: processes and filters each file immediately to avoid storing all raw data.
-"""
 function load_and_process_data(path)
     files = glob(FILE_PATTERN, path)
-    
     if isempty(files)
-        error("No data files found in $path using pattern $FILE_PATTERN")
+        error("No data files found in $path")
     end
     
-    println("Found $(length(files)) data files. Loading and processing incrementally...")
+    println("Found $(length(files)) files. Processing...")
     
-    # Process files one at a time and accumulate results
-    processed_dfs = DataFrame[]
-    
-    for (idx, file) in enumerate(files)
-        print("Processing file $idx/$(length(files)): $(basename(file))... ")
-        processed = process_single_file(file)
-        if processed !== nothing && nrow(processed) > 0
-            push!(processed_dfs, processed)
-            println("✓ ($(nrow(processed)) rows)")
-        else
-            println("✗ (skipped)")
+    df_list = DataFrame[]
+    for (i, file) in enumerate(files)
+        dt = read_psychopy_dat(file)
+        if !isempty(dt)
+            # Select only necessary columns to save memory
+            # We need: RT, CueValues, RespLoc, Practice (if exists)
+            cols_to_keep = ["RT", "CueValues", "RespLoc"]
+            if "Practice" in names(dt) push!(cols_to_keep, "Practice") end
+            
+            # Keep only existing columns
+            select!(dt, intersect(names(dt), cols_to_keep))
+            
+            push!(df_list, dt)
         end
+        if i % 5 == 0 print(".") end # Progress indicator
     end
-    
-    if isempty(processed_dfs)
-        error("No valid data found in any files")
+    println("\nMerging datasets...")
+    full_df = vcat(df_list...)
+
+    # --- CLEANING ---
+    # 1. Remove Practice
+    if "Practice" in names(full_df)
+        filter!(row -> row.Practice != "Y", full_df)
     end
+
+    # 2. Parse CueValues
+    full_df.ParsedRewards = parse_array_string.(full_df.CueValues)
+
+    # 3. Clean RT and Choice
+    # Remove missing/invalid RTs
+    filter!(row -> !ismissing(row.RT) && isa(row.RT, Number), full_df)
+    # Convert to Float64
+    full_df.RT = Float64.(full_df.RT)
     
-    # Combine all processed sessions (now much smaller in memory)
-    println("Combining $(length(processed_dfs)) processed files...")
-    full_df = vcat(processed_dfs...)
-    
-    println("Data loaded successfully. Total valid trials: $(nrow(full_df))")
+    # Filter biologically plausible RTs (e.g., 0.05s to 2.0s)
+    filter!(row -> 0.05 < row.RT < 2.0, full_df)
+
+    # Parse Choice (RespLoc)
+    if "RespLoc" in names(full_df)
+        # Ensure RespLoc is numeric. PsychoPy sometimes saves "None" or "[]"
+        filter!(row -> !ismissing(row.RespLoc) && isa(row.RespLoc, Number), full_df)
+        full_df.Choice = Int.(full_df.RespLoc)
+    else
+        error("Critical: 'RespLoc' column missing.")
+    end
+
+    println("Data loaded. Valid trials: $(nrow(full_df))")
     return full_df
 end
 
 # ==========================================================================
-# 3. MODEL DEFINITION (LIKELIHOOD FUNCTION)
+# 3. MODEL LOGIC
 # ==========================================================================
 
-"""
-    mis_lba_mixture_loglike(params, data)
-
-Calculates the negative log-likelihood of the data given the parameters.
-Combines MIS-driven Drift Rates, LBA decision model, and Express Saccade mixture.
-
-Parameters expected in `params` vector:
-1. C (Capacity) - MIS parameter
-2. w_slope (Reward sensitivity) - MIS parameter
-3. A (Start point variability) - LBA parameter
-4. k (Threshold gap: b = A + k) - LBA parameter
-5. t0 (Non-decision time) - LBA parameter
-6. prob_express (Mixing probability for express saccades)
-7. mu_express (Mean RT of express saccades)
-8. sigma_express (SD of express saccades)
-"""
 function mis_lba_mixture_loglike(params, df::DataFrame)
-    # --- 1. Unpack Parameters ---
-    C            = params[1] # Capacity (Total processing rate)
-    w_slope      = params[2] # Slope for Weight = 1 + slope * Reward
-    A            = params[3] # Max start point
-    k            = params[4] # Distance from A to Threshold (b - A)
-    t0           = params[5] # Non-decision time
-    prob_express = params[6] # Probability of express saccade
-    mu_express   = params[7] # Mean of express peak
-    sigma_express= params[8] # SD of express peak
+    # Unpack
+    C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
     
-    # Check constraints to avoid numerical errors (return Inf if invalid)
-    if C <= 0 || w_slope < 0 || A <= 0 || k <= 0 || t0 <= 0 || 
-       prob_express < 0 || prob_express > 1 || sigma_express <= 0
+    # Constraints
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || 
+       p_exp<0 || p_exp>1 || sig_exp<=0
         return Inf
     end
 
     total_neg_ll = 0.0
-    
-    # Pre-define the Express Saccade Distribution (Normal)
-    dist_express = Normal(mu_express, sigma_express)
-    
-    # --- 2. Loop through trials ---
-    # (Note: For massive datasets, vectorization is faster, but loops are clearer for custom logic)
+    dist_express = Normal(mu_exp, sig_exp)
+
     for i in 1:nrow(df)
         rt = df.RT[i]
         choice = df.Choice[i]
-        rewards = df.ParsedRewards[i] # Vector of 4 rewards
+        rewards = df.ParsedRewards[i]
+
+        # Validation
+        if choice < 1 || choice > length(rewards) continue end
+
+        # --- MIS THEORY ---
+        # Weight = 1 + w * Reward
+        weights = 1.0 .+ (w_slope .* rewards)
+        rel_weights = weights ./ sum(weights)
+        drift_rates = C .* rel_weights
+
+        # --- LBA ---
+        # b = A + k (k ensures b > A)
+        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
         
-        # Skip if data is invalid
-        if choice < 1 || choice > length(rewards)
-            continue
+        lik_reg = 0.0
+        try
+            lik_reg = pdf(lba, (choice=choice, rt=rt))
+        catch
+            lik_reg = 1e-10
         end
 
-        # --- A. THE MIS MODEL PART (Theory) ---
-        # Calculate Drift Rates (v) based on Rewards
-        # Assumption: Weight_i = 1 + slope * Reward_i
-        # (We add 1.0 base weight to ensure drift is non-zero even if reward is 0)
-        weights = 1.0 .+ (w_slope .* rewards)
-        
-        # Relative Weights (Competition)
-        # MIS Theory: The intention competes for the total Capacity C
-        rel_weights = weights ./ sum(weights)
-        
-        # Drift Rates
-        # v_i = Capacity * Relative_Weight_i
-        drift_rates = C .* rel_weights
-        
-        # --- B. THE LBA MODEL PART (Engine) ---
-        # Create LBA distribution for this specific trial
-        # SequentialSamplingModels uses: LBA(; ν, A, k, τ)
-        # ν = drift rates, A = start point max, k = b-A, τ = t0
-        lba_dist = LBA(ν=drift_rates, A=A, k=k, τ=t0)
-        
-        # Calculate Likelihood of Regular Saccade
-        # pdf returns the probability density of making 'choice' at time 'rt'
-        # We use a try-catch block because LBA can fail numerically for impossible RTs (e.g., rt < t0)
-        lik_regular = 0.0
-        try
-            # Construct the named tuple expected by SequentialSamplingModels pdf
-            lik_regular = pdf(lba_dist, (choice=choice, rt=rt))
-        catch
-            lik_regular = 1e-10 # Small epsilon if model fails
-        end
-        
-        # --- C. THE MIXTURE MODEL PART (Bimodal Data) ---
-        # Calculate Likelihood of Express Saccade
-        lik_express = pdf(dist_express, rt)
-        
-        # Combine them
-        # L_total = p * L_express + (1-p) * L_regular
-        lik_total = (prob_express * lik_express) + ((1 - prob_express) * lik_regular)
-        
-        # Handle numerical zeroes
-        if lik_total <= 0
-            lik_total = 1e-10
-        end
-        
-        total_neg_ll -= log(lik_total)
+        # --- MIXTURE ---
+        lik_exp = pdf(dist_express, rt)
+        lik_tot = (p_exp * lik_exp) + ((1-p_exp) * lik_reg)
+
+        if lik_tot <= 1e-20 lik_tot = 1e-20 end
+        total_neg_ll -= log(lik_tot)
     end
-    
     return total_neg_ll
 end
 
 # ==========================================================================
-# 4. OPTIMIZATION ROUTINE
+# 4. FITTING & PLOTTING
 # ==========================================================================
 
-function fit_data()
-    # 1. Load Data
-    println("--- Loading Data from $DATA_PATH ---")
-    df = load_and_process_data(DATA_PATH)
+function run_analysis()
+    # 1. Load
+    data = load_and_process_data(DATA_PATH)
     
-    # 2. Define Initial Parameters and Bounds
-    # Order: [C, w_slope, A, k, t0, prob_express, mu_express, sigma_express]
+    # 2. Optimize
+    # [C, w, A, k, t0, p_exp, mu_exp, sig_exp]
+    lower = [1.0, 0.0, 0.01, 0.01, 0.01, 0.0,  0.05, 0.001]
+    upper = [30.0,10.0, 1.0,  1.0,  0.5,  0.8,  0.20, 0.1]
+    x0    = [10.0, 1.0, 0.3,  0.3,  0.1,  0.2,  0.10, 0.01] # Start mu_exp at 100ms
+
+    println("Fitting model...")
+    func = x -> mis_lba_mixture_loglike(x, data)
+    res = optimize(func, lower, upper, x0, Fminbox(BFGS()); 
+                   autodiff=:forward, time_limit=600.0)
     
-    # Initial Guesses (Heuristics based on literature)
-    # C: ~3-10 Hz
-    # A: ~0.2-0.5s
-    # k: ~0.2-0.5s
-    # t0: ~0.1-0.2s (Standard non-decision)
-    # p_exp: ~0.2 (20% express saccades)
-    # mu_exp: ~0.1s (100ms express peak)
-    lower_bounds = [1.0,  0.0, 0.01, 0.01, 0.01, 0.0,  0.05, 0.001]
-    upper_bounds = [20.0, 5.0, 1.0,  1.0,  0.5,  0.5,  0.15, 0.05]
-    initial_x    = [5.0,  0.5, 0.3,  0.3,  0.15, 0.15, 0.10, 0.01] 
+    best = Optim.minimizer(res)
+    println("Best Params: $best")
+
+    # 3. Save Results
+    results_df = DataFrame(
+        Parameter = ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)", "ProbExp", "MuExp", "SigExp"],
+        Value = best
+    )
+    CSV.write(OUTPUT_CSV, results_df)
+    println("Saved parameters to $OUTPUT_CSV")
+
+    # 4. Visualization
+    println("Generating plot...")
     
-    println("--- Starting Optimization ---")
-    println("Initial Guess: $initial_x")
+    # Histogram of data
+    histogram(data.RT, normalize=true, label="Data", alpha=0.5, bins=50,
+              xlabel="Reaction Time (s)", ylabel="Density", title="MIS-LBA Fit")
     
-    # Define the objective function (single argument for Optim)
-    objective(x) = mis_lba_mixture_loglike(x, df)
+    # Model Prediction Curve
+    # We simulate the aggregate prediction by averaging model PDF across all trials
+    t_grid = range(0.0, 1.5, length=200)
+    y_pred = zeros(length(t_grid))
     
-    # Run Optimization using Fminbox (for bounds) and BFGS
-    # We use Fminbox to strictly enforce parameters stay physically meaningful
-    result = optimize(objective, lower_bounds, upper_bounds, initial_x, Fminbox(BFGS()); 
-                      autodiff = :forward, show_trace=true, time_limit=300.0)
+    # Use a subset of trials to estimate the average predictive curve (for speed)
+    n_samples = min(500, nrow(data))
+    subset_indices = rand(1:nrow(data), n_samples)
     
-    println("\n--- Optimization Complete ---")
-    println(result)
+    for t_idx in 1:length(t_grid)
+        t = t_grid[t_idx]
+        avg_lik = 0.0
+        for i in subset_indices
+            rewards = data.ParsedRewards[i]
+            # Re-calculate drift for this trial
+            ws = 1.0 .+ (best[2] .* rewards)
+            vs = best[1] .* (ws ./ sum(ws))
+            
+            # LBA Probability (summed over any choice for aggregate RT)
+            lba = LBA(ν=vs, A=best[3], k=best[4], τ=best[5])
+            # Probability of responding *anything* at time t
+            # Simple way: sum pdf over all choices
+            lik_reg_t = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
+            
+            # Express Probability
+            lik_exp_t = pdf(Normal(best[7], best[8]), t)
+            
+            avg_lik += (best[6]*lik_exp_t + (1-best[6])*lik_reg_t)
+        end
+        y_pred[t_idx] = avg_lik / n_samples
+    end
     
-    best_params = Optim.minimizer(result)
-    println("\n--- Best Fitting Parameters ---")
-    println("Capacity (C):        $(round(best_params[1], digits=4))")
-    println("Reward Slope (w):    $(round(best_params[2], digits=4))")
-    println("Start Var (A):       $(round(best_params[3], digits=4))")
-    println("Threshold Gap (k):   $(round(best_params[4], digits=4))")
-    println("Non-decision (t0):   $(round(best_params[5], digits=4))")
-    println("Prob Express:        $(round(best_params[6], digits=4))")
-    println("Mu Express:          $(round(best_params[7], digits=4))")
-    println("Sigma Express:       $(round(best_params[8], digits=4))")
-    
-    return best_params, df
+    plot!(t_grid, y_pred, label="Model", linewidth=3, color=:red)
+    savefig(OUTPUT_PLOT)
+    println("Saved plot to $OUTPUT_PLOT")
 end
 
-# ==========================================================================
-# 5. RUN THE SCRIPT
-# ==========================================================================
-
-# Call the main function
-best_params, data = fit_data()
-
-# If you want to calculate BIC (Bayesian Information Criterion)
-n_params = 8
-n_data = nrow(data)
-log_likelihood = -mis_lba_mixture_loglike(best_params, data)
-bic = log(n_data)*n_params - 2*log_likelihood
-println("BIC: $bic")
-
-# ==========================================================================
-# 6. CSV EXPORT OF RESULTS
-# ==========================================================================
-
-# Create a results DataFrame
-results_df = DataFrame(
-    Parameter = [
-        "Capacity_C",
-        "Reward_Slope_w",
-        "Start_Var_A",
-        "Threshold_Gap_k",
-        "Non_decision_t0",
-        "Prob_Express",
-        "Mu_Express",
-        "Sigma_Express",
-        "BIC",
-        "Log_Likelihood",
-        "N_Trials",
-        "N_Parameters"
-    ],
-    Value = [
-        best_params[1],
-        best_params[2],
-        best_params[3],
-        best_params[4],
-        best_params[5],
-        best_params[6],
-        best_params[7],
-        best_params[8],
-        bic,
-        log_likelihood,
-        n_data,
-        n_params
-    ]
-)
-
-# Export to CSV
-output_file = joinpath("..", "results", "mis_lba_fit_results.csv")
-mkpath(dirname(output_file))  # Create directory if it doesn't exist
-CSV.write(output_file, results_df)
-println("\n--- Results exported to: $output_file ---")
+run_analysis()
