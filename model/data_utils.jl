@@ -100,7 +100,7 @@ function load_and_process_data(path, file_pattern="*.dat")
         dt = read_psychopy_dat(file)
         if !isempty(dt)
             # Keep relevant columns if they exist
-            cols_needed = ["RT", "CueValues", "RespLoc", "PointTargetResponse", "CueResponseValue"]
+            cols_needed = ["RT", "CueValues", "RespLoc", "PointTargetResponse", "CueResponseValue", "CueCondition"]
             cols_present = intersect(names(dt), cols_needed)
             select!(dt, cols_present)
             push!(df_list, dt)

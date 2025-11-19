@@ -49,9 +49,25 @@ function run_analysis()
     println("=" ^ 70)
     data = load_and_process_data(DATA_PATH, FILE_PATTERN)
 
-    # Step 2: Set up optimization
+    # Check if CueCondition column exists
+    if !("CueCondition" in names(data))
+        error("CueCondition column not found in data. Please ensure data files contain this column.")
+    end
+
+    # Get unique cue conditions
+    cue_conditions = unique(data.CueCondition)
+    filter!(x -> !ismissing(x), cue_conditions)
+    sort!(cue_conditions)
+    
+    println("\nFound $(length(cue_conditions)) unique cue conditions:")
+    for (i, cc) in enumerate(cue_conditions)
+        n_trials = sum(data.CueCondition .== cc)
+        println("  $i. CueCondition $cc: $n_trials trials")
+    end
+
+    # Step 2: Set up optimization parameters
     println("\n" * "=" ^ 70)
-    println("FITTING MODEL")
+    println("FITTING MODEL FOR EACH CUE CONDITION")
     println("=" ^ 70)
 
     # Parameter bounds and initial values
@@ -60,32 +76,62 @@ function run_analysis()
     upper = [30.0, 10.0,  1.0,  1.0,  0.6,  0.8,  0.20,  0.1]
     x0    = [10.0, 1.0,   0.3,  0.3,  0.2,  0.2,  0.10,  0.02]
 
-    # Fit the model
-    result = fit_model(data, mis_lba_mixture_loglike;
-                       lower=lower, upper=upper, x0=x0, time_limit=600.0)
+    # Store all results
+    all_results = DataFrame[]
+    
+    # Step 3: Fit model for each cue condition
+    for (idx, cue_cond) in enumerate(cue_conditions)
+        println("\n" * "-" ^ 70)
+        println("FITTING CUE CONDITION: $cue_cond ($idx/$(length(cue_conditions)))")
+        println("-" ^ 70)
+        
+        # Filter data for this cue condition
+        condition_data = filter(row -> row.CueCondition == cue_cond, data)
+        n_trials = nrow(condition_data)
+        println("Number of trials: $n_trials")
+        
+        if n_trials < 10
+            println("WARNING: Too few trials ($n_trials) for cue condition $cue_cond. Skipping...")
+            continue
+        end
 
-    # Step 3: Save results
+        # Fit the model for this condition
+        result = fit_model(condition_data, mis_lba_mixture_loglike;
+                           lower=lower, upper=upper, x0=x0, time_limit=600.0)
+
+        # Save results for this condition
+        results_df = save_results(result, 
+                                   "model_fit_results_condition_$(cue_cond).csv";
+                                   cue_condition=cue_cond)
+        push!(all_results, results_df)
+        
+        # Generate plot for this condition
+        best_params = Optim.minimizer(result)
+        generate_plot(condition_data, best_params, 
+                      "model_fit_plot_condition_$(cue_cond).png";
+                      cue_condition=cue_cond)
+    end
+
+    # Step 4: Combine and save all results
     println("\n" * "=" ^ 70)
-    println("SAVING RESULTS")
+    println("SAVING COMBINED RESULTS")
     println("=" ^ 70)
 
-    results_df = save_results(result, OUTPUT_CSV)
-    println("\nFitted Parameters:")
-    println(results_df)
-
-    # Step 4: Generate plot
-    println("\n" * "=" ^ 70)
-    println("GENERATING VISUALIZATION")
-    println("=" ^ 70)
-
-    best_params = Optim.minimizer(result)
-    generate_plot(data, best_params, OUTPUT_PLOT)
+    if !isempty(all_results)
+        combined_results = vcat(all_results...)
+        CSV.write(OUTPUT_CSV, combined_results)
+        println("\nCombined fitted parameters:")
+        println(combined_results)
+        println("\nResults saved to: $OUTPUT_CSV")
+    else
+        println("WARNING: No results to save!")
+    end
 
     println("\n" * "=" ^ 70)
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
-    println("Results saved to: $OUTPUT_CSV")
-    println("Plot saved to: $OUTPUT_PLOT")
+    println("Combined results saved to: $OUTPUT_CSV")
+    println("Individual condition results and plots saved with condition-specific filenames")
 end
 
 # ==========================================================================
@@ -93,6 +139,8 @@ end
 # ==========================================================================
 
 using Optim  # Needed for Optim.minimizer
+using CSV    # Needed for CSV.write
+using DataFrames  # Needed for DataFrame operations
 
 if abspath(PROGRAM_FILE) == @__FILE__
     run_analysis()

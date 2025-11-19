@@ -53,17 +53,18 @@ function fit_model(data::DataFrame, objective_func;
 end
 
 """
-    save_results(result, output_csv="model_fit_results.csv")
+    save_results(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
 
     Saves the optimization results to a CSV file.
 
     Arguments:
     - result: Optim result object
     - output_csv: Output filename
+    - cue_condition: Optional cue condition identifier (for multi-condition fits)
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results(result, output_csv="model_fit_results.csv")
+function save_results(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
     best = Optim.minimizer(result)
 
     results_df = DataFrame(
@@ -71,6 +72,11 @@ function save_results(result, output_csv="model_fit_results.csv")
                      "ThreshGap(k)", "NonDec(t0)", "ProbExp", "MuExp", "SigExp"],
         Value = best
     )
+    
+    # Add cue condition column if provided
+    if !isnothing(cue_condition)
+        results_df.CueCondition = fill(cue_condition, nrow(results_df))
+    end
 
     CSV.write(output_csv, results_df)
     println("Saved parameters to $output_csv")
@@ -79,7 +85,7 @@ function save_results(result, output_csv="model_fit_results.csv")
 end
 
 """
-    generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png")
+    generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
 
     Generates a plot comparing observed RT distribution with model predictions.
 
@@ -87,16 +93,23 @@ end
     - data: DataFrame with CleanRT, Choice, and ParsedRewards columns
     - params: Vector of model parameters [C, w, A, k, t0, p_exp, mu_exp, sig_exp]
     - output_plot: Output filename for plot
+    - cue_condition: Optional cue condition identifier for plot title
 """
-function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png")
+function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
     println("Generating plot...")
 
     # Unpack parameters
     C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
 
+    # Create title with cue condition if provided
+    title_str = "MIS-LBA Mixture Fit"
+    if !isnothing(cue_condition)
+        title_str = "MIS-LBA Mixture Fit - Cue Condition: $cue_condition"
+    end
+
     # Histogram of Observed RT
     histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
-              xlabel="Reaction Time (s)", ylabel="Density", title="MIS-LBA Mixture Fit",
+              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
               color=:blue, legend=:topright)
 
     # Simulate Model Curve
