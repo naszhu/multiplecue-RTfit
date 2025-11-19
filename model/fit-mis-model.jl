@@ -48,9 +48,151 @@ function parse_array_string(str::AbstractString)
 end
 
 """
+    find_header_and_columns(file)
+
+Finds the header line and identifies column indices for RT, RespLoc, CueValues, and Practice.
+Returns (header_line, col_indices_dict).
+"""
+function find_header_and_columns(file)
+    open(file, "r") do io
+        line_num = 0
+        for line in eachline(io)
+            line_num += 1
+            # Look for a line that has tab-separated values and contains column names we expect
+            if occursin('\t', line) && 
+               (occursin("RT", line) || occursin("RespLoc", line) || occursin("CueValues", line))
+                # Parse header to find column indices
+                headers = split(line, '\t')
+                col_indices = Dict{String, Int}()
+                for (idx, header) in enumerate(headers)
+                    header = strip(header)
+                    if header in ["RT", "RespLoc", "CueValues", "Practice"]
+                        col_indices[header] = idx
+                    end
+                end
+                return (line_num, col_indices)
+            end
+        end
+        return (1, Dict{String, Int}())  # Default if not found
+    end
+end
+
+"""
+    process_single_file(file)
+
+Processes a single data file: loads, filters, and returns cleaned DataFrame.
+Uses streaming approach to only read needed columns for memory efficiency.
+"""
+function process_single_file(file)
+    try
+        # Find header and column indices
+        header_line, col_indices = find_header_and_columns(file)
+        
+        if isempty(col_indices) || !("RT" in keys(col_indices)) || 
+           !("RespLoc" in keys(col_indices)) || !("CueValues" in keys(col_indices))
+            println("Warning: Required columns not found in $file")
+            return nothing
+        end
+        
+        # Read file line by line, extracting only needed columns
+        rows = []
+        open(file, "r") do io
+            # Skip to data rows (after header)
+            for _ in 1:header_line
+                readline(io)
+            end
+            
+            # Read data rows
+            for line in eachline(io)
+                fields = split(line, '\t')
+                if length(fields) >= maximum(values(col_indices))
+                    row = Dict{String, Any}()
+                    if "RT" in keys(col_indices)
+                        row["RT"] = fields[col_indices["RT"]]
+                    end
+                    if "RespLoc" in keys(col_indices)
+                        row["RespLoc"] = fields[col_indices["RespLoc"]]
+                    end
+                    if "CueValues" in keys(col_indices)
+                        row["CueValues"] = fields[col_indices["CueValues"]]
+                    end
+                    if "Practice" in keys(col_indices)
+                        row["Practice"] = fields[col_indices["Practice"]]
+                    end
+                    push!(rows, row)
+                end
+            end
+        end
+        
+        if isempty(rows)
+            return nothing
+        end
+        
+        # Convert to DataFrame
+        dt = DataFrame(rows)
+        
+        # Early filtering to reduce memory: Remove practice trials
+        if "Practice" in names(dt)
+            filter!(row -> row.Practice != "Y", dt)
+        end
+        
+        # Filter valid RTs early and convert to Float64
+        filter!(row -> !ismissing(row.RT) && row.RT != "", dt)
+        # Convert RT to Float64, handling string values
+        rt_values = Float64[]
+        for val in dt.RT
+            try
+                push!(rt_values, parse(Float64, string(val)))
+            catch
+                push!(rt_values, NaN)
+            end
+        end
+        dt.RT = rt_values
+        filter!(row -> !isnan(row.RT) && 0.05 < row.RT < 2.0, dt)
+        
+        # Skip if no valid rows remain
+        if nrow(dt) == 0
+            return nothing
+        end
+        
+        # Parse CueValues (The Rewards)
+        dt.ParsedRewards = parse_array_string.(dt.CueValues)
+        
+        # Determine Choice Index
+        if "RespLoc" in names(dt)
+            choice_values = Int[]
+            for val in dt.RespLoc
+                try
+                    push!(choice_values, parse(Int, string(val)))
+                catch
+                    push!(choice_values, 0)  # Invalid choice
+                end
+            end
+            dt.Choice = choice_values
+            filter!(row -> row.Choice >= 1 && row.Choice <= 4, dt)  # Valid choices are 1-4
+        else
+            error("Column 'RespLoc' not found in file $file")
+        end
+        
+        # Only keep necessary columns to reduce memory
+        required_cols = ["RT", "Choice", "ParsedRewards"]
+        if "Practice" in names(dt)
+            required_cols = ["RT", "Choice", "ParsedRewards", "Practice"]
+        end
+        select!(dt, required_cols)
+        
+        return dt
+    catch e
+        println("Warning: Could not process file $file. Error: $e")
+        return nothing
+    end
+end
+
+"""
     load_and_process_data(path)
 
-Loads all .dat files from the directory, concatenates them, and cleans the data.
+Loads all .dat files from the directory, processes them incrementally, and returns cleaned data.
+Memory-efficient: processes and filters each file immediately to avoid storing all raw data.
 """
 function load_and_process_data(path)
     files = glob(FILE_PATTERN, path)
@@ -59,58 +201,29 @@ function load_and_process_data(path)
         error("No data files found in $path using pattern $FILE_PATTERN")
     end
     
-    println("Found $(length(files)) data files. Loading...")
+    println("Found $(length(files)) data files. Loading and processing incrementally...")
     
-    df_list = DataFrame[]
+    # Process files one at a time and accumulate results
+    processed_dfs = DataFrame[]
     
-    for file in files
-        # Load file, assuming tab-delimited based on .dat convention in PsychoPy
-        # We use silencewarnings because headers might be messy in some lines
-        try
-            dt = CSV.read(file, DataFrame; delim='\t', silencewarnings=true)
-            push!(df_list, dt)
-        catch e
-            println("Warning: Could not read file $file. Error: $e")
+    for (idx, file) in enumerate(files)
+        print("Processing file $idx/$(length(files)): $(basename(file))... ")
+        processed = process_single_file(file)
+        if processed !== nothing && nrow(processed) > 0
+            push!(processed_dfs, processed)
+            println("✓ ($(nrow(processed)) rows)")
+        else
+            println("✗ (skipped)")
         end
     end
     
-    # Combine all sessions
-    full_df = vcat(df_list...)
-    
-    # --- FILTERING ---
-    # 1. Remove practice trials if indicated
-    if "Practice" in names(full_df)
-        filter!(row -> row.Practice != "Y", full_df)
+    if isempty(processed_dfs)
+        error("No valid data found in any files")
     end
     
-    # 2. Filter valid RTs (remove missing, too fast, or too slow)
-    # Assuming RT is in seconds. Remove RTs < 50ms or > 1.5s as outliers
-    filter!(row -> !ismissing(row.RT), full_df)
-    try
-        # Convert RT to Float if it was read as String/Any
-        full_df.RT = Float64.(full_df.RT)
-    catch
-        # Handle "None" or other strings in RT
-        filter!(row -> isa(row.RT, Number), full_df)
-    end
-    filter!(row -> 0.05 < row.RT < 2.0, full_df)
-    
-    # 3. Parse CueValues (The Rewards)
-    # We create a new column `ParsedRewards` containing vectors
-    full_df.ParsedRewards = parse_array_string.(full_df.CueValues)
-    
-    # 4. Determine Choice Index
-    # We need to know WHICH of the 4 cues was chosen (1, 2, 3, or 4).
-    # We use `RespLoc` (Response Location) if available, or try to infer it.
-    # Based on file format description, RespLoc likely maps to 1-4.
-    if "RespLoc" in names(full_df)
-        # Ensure it is integer 1-4. Adjust if RespLoc uses 0-3 or other mapping.
-        # Assuming 1: TopLeft, 2: TopRight, 3: BottomLeft, 4: BottomRight (standard reading order)
-        # Adjust this mapping based on your specific experimental setup if needed.
-        full_df.Choice = Int.(full_df.RespLoc)
-    else
-        error("Column 'RespLoc' not found. Cannot determine which cue was chosen.")
-    end
+    # Combine all processed sessions (now much smaller in memory)
+    println("Combining $(length(processed_dfs)) processed files...")
+    full_df = vcat(processed_dfs...)
     
     println("Data loaded successfully. Total valid trials: $(nrow(full_df))")
     return full_df
