@@ -43,6 +43,13 @@ const OUTPUT_PLOT = "model_fit_plot.png"
 # ==========================================================================
 
 function run_analysis()
+    # Create images subfolder if it doesn't exist
+    images_dir = joinpath(@__DIR__, "images")
+    if !isdir(images_dir)
+        mkdir(images_dir)
+        println("Created images directory: $images_dir")
+    end
+    
     # Step 1: Load and process data
     println("=" ^ 70)
     println("LOADING DATA")
@@ -107,8 +114,9 @@ function run_analysis()
         
         # Generate plot for this condition
         best_params = Optim.minimizer(result)
+        plot_path = joinpath(images_dir, "model_fit_plot_condition_$(cue_cond).png")
         generate_plot(condition_data, best_params, 
-                      "model_fit_plot_condition_$(cue_cond).png";
+                      plot_path;
                       cue_condition=cue_cond)
     end
 
