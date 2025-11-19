@@ -115,8 +115,17 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     rt_range = rt_max - rt_min
     kde_grid = range(max(0.05, rt_min - 0.1*rt_range), min(1.5, rt_max + 0.1*rt_range), length=200)
     
+    # Adaptive bandwidth using Silverman's rule of thumb
+    n = length(data.CleanRT)
+    rt_std = std(data.CleanRT)
+    rt_quantiles = quantile(data.CleanRT, [0.25, 0.75])
+    rt_iqr = rt_quantiles[2] - rt_quantiles[1]
+    # Silverman's rule: h = 0.9 * min(σ, IQR/1.34) * n^(-1/5)
+    bandwidth = 0.9 * min(rt_std, rt_iqr / 1.34) * (n ^ (-1/5))
+    # Ensure minimum bandwidth to avoid overfitting
+    bandwidth = max(bandwidth, 0.01)
+    
     # Simple KDE using Gaussian kernel
-    bandwidth = 0.03  # Bandwidth for KDE
     kde_dens = zeros(length(kde_grid))
     for (i, t) in enumerate(kde_grid)
         kde_dens[i] = mean([pdf(Normal(t, bandwidth), rt) for rt in data.CleanRT])
@@ -250,6 +259,7 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
 
     savefig(p, output_plot)
     println("Saved plot to $output_plot")
+    println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Express probability: $(round(p_exp, digits=6))")
     println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
     println("  Non-decision time (t0): $(round(t0, digits=3))s")
@@ -324,8 +334,17 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     rt_range = rt_max - rt_min
     kde_grid = range(max(0.05, rt_min - 0.1*rt_range), min(1.5, rt_max + 0.1*rt_range), length=200)
     
+    # Adaptive bandwidth using Silverman's rule of thumb
+    n = length(data.CleanRT)
+    rt_std = std(data.CleanRT)
+    rt_quantiles = quantile(data.CleanRT, [0.25, 0.75])
+    rt_iqr = rt_quantiles[2] - rt_quantiles[1]
+    # Silverman's rule: h = 0.9 * min(σ, IQR/1.34) * n^(-1/5)
+    bandwidth = 0.9 * min(rt_std, rt_iqr / 1.34) * (n ^ (-1/5))
+    # Ensure minimum bandwidth to avoid overfitting
+    bandwidth = max(bandwidth, 0.01)
+    
     # Simple KDE using Gaussian kernel
-    bandwidth = 0.03  # Bandwidth for KDE
     kde_dens = zeros(length(kde_grid))
     for (i, t) in enumerate(kde_grid)
         kde_dens[i] = mean([pdf(Normal(t, bandwidth), rt) for rt in data.CleanRT])
@@ -435,6 +454,7 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
 
     savefig(p, output_plot)
     println("Saved plot to $output_plot")
+    println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Mixing probability: $(round(p_mix, digits=4))")
     println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
     println("  LBA2 (slow) - t0: $(round(t0_2, digits=3))s, peak at: $(round(max_lba2_rt, digits=3))s")
