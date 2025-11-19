@@ -159,13 +159,46 @@ ggsave(
   bg = "white"
 )
 
-# Plot 2: RT density by trial type
-p2 <- ggplot(combined_data[!is.na(combined_data$TrialType), ], 
-             aes(x = RT_sec, color = TrialType)) +
-  geom_density(alpha = 0.7, linewidth = 1.2) +
+# Plot 2: RT density by trial type (with weighted densities)
+data_for_plot2 <- combined_data[!is.na(combined_data$TrialType), ]
+
+# Calculate proportions for each trial type
+trial_type_counts_all <- table(data_for_plot2$TrialType)
+total_trials_all <- sum(trial_type_counts_all)
+trial_type_props_all <- trial_type_counts_all / total_trials_all
+
+# Calculate overall density
+overall_density_all <- density(data_for_plot2$RT_sec, na.rm = TRUE)
+overall_df_all <- data.frame(x = overall_density_all$x, y = overall_density_all$y)
+
+# Calculate weighted densities for each trial type
+weighted_densities_all <- list()
+for (tt in names(trial_type_props_all)) {
+  tt_data <- data_for_plot2[data_for_plot2$TrialType == tt, ]
+  if (nrow(tt_data) > 1) {
+    tt_density <- density(tt_data$RT_sec, na.rm = TRUE)
+    # Weight by proportion
+    weighted_densities_all[[tt]] <- data.frame(
+      x = tt_density$x,
+      y = tt_density$y * trial_type_props_all[tt],
+      TrialType = tt
+    )
+  }
+}
+
+# Combine all weighted densities
+weighted_df_all <- do.call(rbind, weighted_densities_all)
+
+p2 <- ggplot() +
+  # Overall density line (black, thicker) - drawn first as base layer
+  geom_line(data = overall_df_all, aes(x = x, y = y), 
+           color = "black", linewidth = 2.5, alpha = 0.9, linetype = "solid") +
+  # Weighted trial type-specific density lines - drawn on top
+  geom_line(data = weighted_df_all, aes(x = x, y = y, color = TrialType), 
+           alpha = 0.7, linewidth = 1.2) +
   labs(
     title = "Hypothesis B: RT Density by RT Speed and Choice Optimality",
-    subtitle = "Very fast non-optimal responses might indicate pre-planning/guessing",
+    subtitle = "Weighted densities sum to overall (black line) - check if curves align",
     x = "Reaction Time (seconds)",
     y = "Density",
     color = "Trial Type"
@@ -348,29 +381,65 @@ if (nrow(combined_data_conditions) > 0) {
     ]
     
     if (nrow(data_cond) > 0) {
-      p <- ggplot(data_cond, aes(x = RT_sec)) +
-        # Overall density line (black, thicker) - drawn first as base layer
-        geom_density(color = "black", linewidth = 2.5, alpha = 0.9, linetype = "solid") +
-        # Trial type-specific density lines - drawn on top
-        geom_density(aes(color = TrialType), alpha = 0.7, linewidth = 1.2) +
-        labs(
-          title = paste("Condition", cond, "- Overall (black) vs Trial Types"),
-          x = "Reaction Time (seconds)",
-          y = "Density",
-          color = "Trial Type"
-        ) +
-        theme_minimal() +
-        theme(
-          plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
-          legend.position = "bottom",
-          legend.text = element_text(size = 8),
-          plot.background = element_rect(fill = "white", color = NA),
-          panel.background = element_rect(fill = "white", color = NA)
-        ) +
-        geom_vline(xintercept = c(0.25, 0.4), 
-                   linetype = "dashed", alpha = 0.5, color = "gray")
+      # Calculate proportions for each trial type
+      trial_type_counts <- table(data_cond$TrialType)
+      total_trials <- sum(trial_type_counts)
+      trial_type_props <- trial_type_counts / total_trials
       
-      plot_list_trialtypes[[as.character(cond)]] <- p
+      # Add proportion as a weight column
+      data_cond$weight <- trial_type_props[as.character(data_cond$TrialType)]
+      
+      # Calculate overall density manually for comparison
+      overall_density <- density(data_cond$RT_sec, na.rm = TRUE)
+      overall_df <- data.frame(x = overall_density$x, y = overall_density$y)
+      
+      # Calculate weighted densities for each trial type
+      weighted_densities <- list()
+      for (tt in names(trial_type_props)) {
+        tt_data <- data_cond[data_cond$TrialType == tt, ]
+        if (nrow(tt_data) > 1) {
+          tt_density <- density(tt_data$RT_sec, na.rm = TRUE)
+          # Weight by proportion
+          weighted_densities[[tt]] <- data.frame(
+            x = tt_density$x,
+            y = tt_density$y * trial_type_props[tt],
+            TrialType = tt
+          )
+        }
+      }
+      
+      # Combine all weighted densities
+      if (length(weighted_densities) > 0) {
+        weighted_df <- do.call(rbind, weighted_densities)
+        
+        p <- ggplot() +
+          # Overall density line (black, thicker) - drawn first as base layer
+          geom_line(data = overall_df, aes(x = x, y = y), 
+                   color = "black", linewidth = 2.5, alpha = 0.9, linetype = "solid") +
+          # Weighted trial type-specific density lines - drawn on top
+          geom_line(data = weighted_df, aes(x = x, y = y, color = TrialType), 
+                   alpha = 0.7, linewidth = 1.2) +
+          labs(
+            title = paste("Condition", cond, "- Overall (black) vs Weighted Trial Types"),
+            subtitle = "Weighted densities sum to overall (check if curves align)",
+            x = "Reaction Time (seconds)",
+            y = "Density",
+            color = "Trial Type"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+            plot.subtitle = element_text(hjust = 0.5, size = 10),
+            legend.position = "bottom",
+            legend.text = element_text(size = 8),
+            plot.background = element_rect(fill = "white", color = NA),
+            panel.background = element_rect(fill = "white", color = NA)
+          ) +
+          geom_vline(xintercept = c(0.25, 0.4), 
+                     linetype = "dashed", alpha = 0.5, color = "gray")
+        
+        plot_list_trialtypes[[as.character(cond)]] <- p
+      }
     }
   }
   
