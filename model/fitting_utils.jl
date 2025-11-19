@@ -109,10 +109,28 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     end
     title_str *= "\n(p_exp=$(round(p_exp, digits=4)), μ_exp=$(round(mu_exp, digits=3)), σ_exp=$(round(sig_exp, digits=3)))"
 
-    # Histogram of Observed RT
-    p = histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
-                  xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-                  color=:blue, legend=:topright, size=(800, 600))
+    # Compute kernel density estimate (KDE) for observed data
+    rt_min = minimum(data.CleanRT)
+    rt_max = maximum(data.CleanRT)
+    rt_range = rt_max - rt_min
+    kde_grid = range(max(0.05, rt_min - 0.1*rt_range), min(1.5, rt_max + 0.1*rt_range), length=200)
+    
+    # Simple KDE using Gaussian kernel
+    bandwidth = 0.03  # Bandwidth for KDE
+    kde_dens = zeros(length(kde_grid))
+    for (i, t) in enumerate(kde_grid)
+        kde_dens[i] = mean([pdf(Normal(t, bandwidth), rt) for rt in data.CleanRT])
+    end
+    
+    # Normalize to proper density (integral = 1)
+    dx = kde_grid[2] - kde_grid[1]
+    kde_dens ./= sum(kde_dens) * dx
+    
+    # Create plot with KDE line
+    p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5, 
+             color=:darkblue, linestyle=:solid, alpha=0.8,
+             xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
+             legend=:topright, size=(800, 600))
 
     # Simulate Model Curve
     # We calculate the unconditional PDF by averaging across all unique reward structures
@@ -300,10 +318,28 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     end
     title_str *= "\n(p_mix=$(round(p_mix, digits=3)), t0_1=$(round(t0_1, digits=3))s, t0_2=$(round(t0_2, digits=3))s)"
 
-    # Histogram of Observed RT
-    p = histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
-                  xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-                  color=:blue, legend=:topright, size=(800, 600))
+    # Compute kernel density estimate (KDE) for observed data
+    rt_min = minimum(data.CleanRT)
+    rt_max = maximum(data.CleanRT)
+    rt_range = rt_max - rt_min
+    kde_grid = range(max(0.05, rt_min - 0.1*rt_range), min(1.5, rt_max + 0.1*rt_range), length=200)
+    
+    # Simple KDE using Gaussian kernel
+    bandwidth = 0.03  # Bandwidth for KDE
+    kde_dens = zeros(length(kde_grid))
+    for (i, t) in enumerate(kde_grid)
+        kde_dens[i] = mean([pdf(Normal(t, bandwidth), rt) for rt in data.CleanRT])
+    end
+    
+    # Normalize to proper density (integral = 1)
+    dx = kde_grid[2] - kde_grid[1]
+    kde_dens ./= sum(kde_dens) * dx
+    
+    # Create plot with KDE line
+    p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5, 
+             color=:darkblue, linestyle=:solid, alpha=0.8,
+             xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
+             legend=:topright, size=(800, 600))
 
     # Compute unconditional PDF
     t_grid = range(0.05, 1.5, length=300)

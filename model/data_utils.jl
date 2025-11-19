@@ -129,30 +129,41 @@ function load_and_process_data(path, file_pattern="*.dat")
     choices = Int[]
     for row in eachrow(full_df)
         c = 0
+        n_options = length(row.ParsedRewards)
 
-        # Strategy A: Check PointTargetResponse (most reliable)
+        # Strategy A: Check PointTargetResponse (most reliable when valid)
         if "PointTargetResponse" in names(full_df)
             val = parse_clean_float(row.PointTargetResponse)
             if !ismissing(val)
-                c = Int(val)
+                c_candidate = Int(val)
+                # Validate: PointTargetResponse must be within bounds
+                if c_candidate > 0 && c_candidate <= n_options
+                    c = c_candidate
+                end
             end
         end
 
-        # Strategy B: Check RespLoc if PointTargetResponse failed
-        if c == 0 && "RespLoc" in names(full_df)
-            val = parse_clean_float(row.RespLoc)
-            if !ismissing(val)
-                c = Int(val)
-            end
-        end
-
-        # Strategy C: Infer from Reward if both failed
+        # Strategy B: Infer from CueResponseValue if PointTargetResponse is invalid
+        # This handles cases where PointTargetResponse uses fixed positions (1-4)
+        # but there are fewer than 4 options
         if c == 0 && "CueResponseValue" in names(full_df)
             val = parse_clean_float(row.CueResponseValue)
             if !ismissing(val)
                 idx = findfirst(x -> x == val, row.ParsedRewards)
                 if !isnothing(idx)
                     c = idx
+                end
+            end
+        end
+
+        # Strategy C: Check RespLoc if both failed
+        if c == 0 && "RespLoc" in names(full_df)
+            val = parse_clean_float(row.RespLoc)
+            if !ismissing(val)
+                c_candidate = Int(val)
+                # Validate: RespLoc must be within bounds
+                if c_candidate > 0 && c_candidate <= n_options
+                    c = c_candidate
                 end
             end
         end
