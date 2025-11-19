@@ -51,8 +51,28 @@ The issue is that the **optimization is finding that `p_exp ≈ 0`** for most co
 
 Bimodality should be visible when:
 1. `p_exp` is non-negligible (> 0.01)
-2. `mu_exp` (express mean) is well-separated from the LBA mode
-3. The express component has sufficient weight in the mixture
+2. `mu_exp` (express mean) is well-separated from the LBA mode (typically > 100ms separation)
+3. The express component has sufficient weight in the mixture (express peak density > 10% of main peak)
+
+## Why Condition 10 Appears Unimodal Despite Non-Zero Express Probability
+
+**Condition 10 Parameters**:
+- `ProbExp = 0.0105` (only 1.05% of responses)
+- `MuExp = 0.200s` (express mean)
+- `t0 = 0.265s` (non-decision time, LBA starts here)
+
+**Problem**: Even though `p_exp > 0`, the express component is:
+1. **Too small**: Only 1% of responses, so its contribution is minimal
+2. **Too close to LBA mode**: Express mean (0.2s) is only 65ms before t0 (0.265s), not well-separated
+3. **Visually lost**: When combined with the 99% LBA component, the 1% express component doesn't create a visible second mode
+
+**Result**: The total mixture PDF appears unimodal because the express component is too small and too close to the main LBA mode to create visible bimodality.
+
+**Solution**: The updated plotting function now:
+- Shows component separation diagnostics
+- Warns when express component is too small/close to create visible bimodality
+- Displays peak locations with vertical lines
+- Reports separation distance and peak densities
 
 ## Recommendations
 
@@ -68,9 +88,12 @@ Bimodality should be visible when:
    - Visual inspection of residuals
    - Cross-validation
 
-4. **Use the improved plots**: The updated plotting function will now show:
+4. **Use the improved plots**: The updated plotting function now shows:
    - Separate express and LBA components
-   - Warning when express component collapses
+   - Warning when express component collapses (p_exp ≈ 0)
+   - Warning when express component is too small/close to create visible bimodality
+   - Vertical lines at component peak locations
+   - Component separation diagnostics
    - Mixture parameters in the title
 
 ## Next Steps

@@ -182,6 +182,20 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
         y_pred_lba ./= total_weight
     end
 
+    # Find peak locations for diagnostics
+    max_total_idx = argmax(y_pred_total)
+    max_total_rt = t_grid[max_total_idx]
+    max_total_dens = y_pred_total[max_total_idx]
+    
+    max_exp_idx = p_exp > 1e-6 ? argmax(y_pred_express) : nothing
+    max_exp_rt = !isnothing(max_exp_idx) ? t_grid[max_exp_idx] : nothing
+    max_exp_dens = !isnothing(max_exp_idx) ? y_pred_express[max_exp_idx] : 0.0
+    
+    # Check if components are well-separated
+    separation = !isnothing(max_exp_rt) ? abs(max_exp_rt - max_total_rt) : 0.0
+    well_separated = separation > 0.1  # At least 100ms separation
+    component_visible = p_exp > 1e-6 && max_exp_dens > max_total_dens * 0.1  # Express peak is at least 10% of main peak
+    
     # Plot components separately to show bimodality
     if p_exp > 1e-6  # Only show express component if it's non-negligible
         plot!(p, t_grid, y_pred_express, label="Express Component (p=$(round(p_exp, digits=3)))", 
@@ -194,15 +208,41 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     plot!(p, t_grid, y_pred_total, label="Total Mixture", linewidth=3, color=:red)
 
     # Add diagnostic text
+    y_pos = maximum(y_pred_total) * 0.85
     if p_exp < 1e-6
-        annotate!(p, 0.7, maximum(y_pred_total) * 0.8, 
+        annotate!(p, 0.7, y_pos, 
                   text("⚠ Express component collapsed (p_exp ≈ 0)", :red, :left, 10))
+    elseif !well_separated || !component_visible
+        warning_msg = "⚠ Express component too small/close to LBA mode"
+        if !well_separated
+            warning_msg *= "\n  (separation: $(round(separation*1000, digits=0))ms < 100ms)"
+        end
+        if !component_visible
+            warning_msg *= "\n  (express peak: $(round(max_exp_dens, digits=3)) vs main: $(round(max_total_dens, digits=3)))"
+        end
+        annotate!(p, 0.7, y_pos, 
+                  text(warning_msg, :orange, :left, 9))
     end
+    
+    # Add vertical lines at component peaks
+    if p_exp > 1e-6 && !isnothing(max_exp_rt)
+        vline!(p, [max_exp_rt], color=:orange, linestyle=:dot, linewidth=1, alpha=0.5, label="")
+    end
+    vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
     savefig(p, output_plot)
     println("Saved plot to $output_plot")
     println("  Express probability: $(round(p_exp, digits=6))")
     println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    if p_exp > 1e-6
+        println("  Express-LBA separation: $(round(separation*1000, digits=0))ms")
+        println("  Express peak density: $(round(max_exp_dens, digits=4))")
+        println("  Main peak density: $(round(max_total_dens, digits=4))")
+        if !well_separated || !component_visible
+            println("  ⚠ WARNING: Express component may not create visible bimodality")
+        end
+    end
 end
 
 end # module
