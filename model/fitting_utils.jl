@@ -14,7 +14,7 @@ using Random
 using Plots
 using CSV
 
-export fit_model, save_results, generate_plot
+export fit_model, save_results, generate_plot, save_results_dual, generate_plot_dual
 
 """
     fit_model(data::DataFrame, objective_func;
@@ -243,6 +243,166 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
             println("  ⚠ WARNING: Express component may not create visible bimodality")
         end
     end
+end
+
+"""
+    save_results_dual(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+
+    Saves the optimization results for dual-LBA model to a CSV file.
+
+    Arguments:
+    - result: Optim result object
+    - output_csv: Output filename
+    - cue_condition: Optional cue condition identifier
+
+    Returns parameter names and values as a DataFrame.
+"""
+function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+    best = Optim.minimizer(result)
+
+    results_df = DataFrame(
+        Parameter = ["Capacity(C)", "RewardSlope(w)", "StartVar1(A1)", "ThreshGap1(k1)",
+                     "NonDec1(t0_1)", "StartVar2(A2)", "ThreshGap2(k2)", "NonDec2(t0_2)", "ProbMix(p_mix)"],
+        Value = best
+    )
+    
+    if !isnothing(cue_condition)
+        results_df.CueCondition = fill(cue_condition, nrow(results_df))
+    end
+
+    CSV.write(output_csv, results_df)
+    println("Saved parameters to $output_csv")
+
+    return results_df
+end
+
+"""
+    generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+
+    Generates a plot for dual-LBA mixture model showing both LBA components separately.
+
+    Arguments:
+    - data: DataFrame with CleanRT, Choice, and ParsedRewards columns
+    - params: Vector of model parameters [C, w, A1, k1, t0_1, A2, k2, t0_2, p_mix]
+    - output_plot: Output filename for plot
+    - cue_condition: Optional cue condition identifier for plot title
+"""
+function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+    println("Generating plot for dual-LBA model...")
+
+    # Unpack parameters
+    C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
+
+    # Create title
+    title_str = "Dual-LBA Mixture Fit"
+    if !isnothing(cue_condition)
+        title_str = "Dual-LBA Mixture Fit - Cue Condition: $cue_condition"
+    end
+    title_str *= "\n(p_mix=$(round(p_mix, digits=3)), t0_1=$(round(t0_1, digits=3))s, t0_2=$(round(t0_2, digits=3))s)"
+
+    # Histogram of Observed RT
+    p = histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
+                  xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
+                  color=:blue, legend=:topright, size=(800, 600))
+
+    # Compute unconditional PDF
+    t_grid = range(0.05, 1.5, length=300)
+    y_pred_total = zeros(length(t_grid))
+    y_pred_lba1 = zeros(length(t_grid))
+    y_pred_lba2 = zeros(length(t_grid))
+
+    # Get unique reward structures
+    reward_counts = Dict()
+    reward_arrays = Dict()
+    for rewards in data.ParsedRewards
+        key = string(rewards)
+        if !haskey(reward_counts, key)
+            reward_counts[key] = 0
+            reward_arrays[key] = rewards
+        end
+        reward_counts[key] += 1
+    end
+
+    total_weight = 0.0
+    for (key, rewards) in reward_arrays
+        weight = reward_counts[key]
+        total_weight += weight
+
+        # Reconstruct drift rates
+        ws = 1.0 .+ (w_slope .* rewards)
+        vs = C .* (ws ./ sum(ws))
+
+        # LBA components
+        lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)
+        lba2 = LBA(ν=vs, A=A2, k=k2, τ=t0_2)
+
+        for (j, t) in enumerate(t_grid)
+            # LBA component 1
+            lba1_dens = 0.0
+            if t > t0_1
+                try
+                    lba1_dens = sum([pdf(lba1, (choice=c, rt=t)) for c in 1:length(vs)])
+                    if isnan(lba1_dens) || isinf(lba1_dens) lba1_dens = 0.0 end
+                catch
+                    lba1_dens = 0.0
+                end
+            end
+
+            # LBA component 2
+            lba2_dens = 0.0
+            if t > t0_2
+                try
+                    lba2_dens = sum([pdf(lba2, (choice=c, rt=t)) for c in 1:length(vs)])
+                    if isnan(lba2_dens) || isinf(lba2_dens) lba2_dens = 0.0 end
+                catch
+                    lba2_dens = 0.0
+                end
+            end
+
+            # Weighted mixture
+            y_pred_lba1[j] += weight * p_mix * lba1_dens
+            y_pred_lba2[j] += weight * (1-p_mix) * lba2_dens
+            y_pred_total[j] += weight * ((p_mix * lba1_dens) + ((1-p_mix) * lba2_dens))
+        end
+    end
+
+    # Normalize
+    if total_weight > 0
+        y_pred_total ./= total_weight
+        y_pred_lba1 ./= total_weight
+        y_pred_lba2 ./= total_weight
+    end
+
+    # Find peaks
+    max_total_idx = argmax(y_pred_total)
+    max_total_rt = t_grid[max_total_idx]
+    
+    max_lba1_idx = argmax(y_pred_lba1)
+    max_lba1_rt = t_grid[max_lba1_idx]
+    max_lba1_dens = y_pred_lba1[max_lba1_idx]
+    
+    max_lba2_idx = argmax(y_pred_lba2)
+    max_lba2_rt = t_grid[max_lba2_idx]
+    max_lba2_dens = y_pred_lba2[max_lba2_idx]
+
+    # Plot components
+    plot!(p, t_grid, y_pred_lba1, label="LBA Component 1 (Fast, p=$(round(p_mix, digits=3)))", 
+          linewidth=2, color=:orange, linestyle=:dash, alpha=0.7)
+    plot!(p, t_grid, y_pred_lba2, label="LBA Component 2 (Slow, p=$(round(1-p_mix, digits=3)))", 
+          linewidth=2, color=:green, linestyle=:dash, alpha=0.7)
+    plot!(p, t_grid, y_pred_total, label="Total Mixture", linewidth=3, color=:red)
+
+    # Add vertical lines at peaks
+    vline!(p, [max_lba1_rt], color=:orange, linestyle=:dot, linewidth=1, alpha=0.5, label="")
+    vline!(p, [max_lba2_rt], color=:green, linestyle=:dot, linewidth=1, alpha=0.5, label="")
+    vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
+
+    savefig(p, output_plot)
+    println("Saved plot to $output_plot")
+    println("  Mixing probability: $(round(p_mix, digits=4))")
+    println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
+    println("  LBA2 (slow) - t0: $(round(t0_2, digits=3))s, peak at: $(round(max_lba2_rt, digits=3))s")
+    println("  Component separation: $(round(abs(max_lba1_rt - max_lba2_rt)*1000, digits=0))ms")
 end
 
 end # module
