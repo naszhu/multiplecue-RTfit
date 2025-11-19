@@ -88,6 +88,7 @@ end
     generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
 
     Generates a plot comparing observed RT distribution with model predictions.
+    Shows the mixture components separately to visualize bimodality.
 
     Arguments:
     - data: DataFrame with CleanRT, Choice, and ParsedRewards columns
@@ -101,58 +102,107 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     # Unpack parameters
     C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
 
-    # Create title with cue condition if provided
+    # Create title with cue condition and mixture info
     title_str = "MIS-LBA Mixture Fit"
     if !isnothing(cue_condition)
         title_str = "MIS-LBA Mixture Fit - Cue Condition: $cue_condition"
     end
+    title_str *= "\n(p_exp=$(round(p_exp, digits=4)), μ_exp=$(round(mu_exp, digits=3)), σ_exp=$(round(sig_exp, digits=3)))"
 
     # Histogram of Observed RT
-    histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
-              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-              color=:blue, legend=:topright)
+    p = histogram(data.CleanRT, normalize=true, label="Observed", alpha=0.5, bins=60,
+                  xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
+                  color=:blue, legend=:topright, size=(800, 600))
 
     # Simulate Model Curve
-    # We calculate the 'average' predicted PDF across all trials
-    t_grid = range(0.05, 1.5, length=200)
-    y_pred = zeros(length(t_grid))
+    # We calculate the unconditional PDF by averaging across all unique reward structures
+    t_grid = range(0.05, 1.5, length=300)
+    y_pred_total = zeros(length(t_grid))
+    y_pred_express = zeros(length(t_grid))
+    y_pred_lba = zeros(length(t_grid))
 
-    # Use a random subset of trials to approximate the curve
-    n_samples = min(200, nrow(data))
-    subset_indices = rand(1:nrow(data), n_samples)
-
-    for (j, t) in enumerate(t_grid)
-        avg_pdf = 0.0
-        for i in subset_indices
-            rewards = data.ParsedRewards[i]
-
-            # Reconstruct parameters
-            ws = 1.0 .+ (w_slope .* rewards)
-            vs = C .* (ws ./ sum(ws))
-
-            # LBA PDF (summed over all choices)
-            lba = LBA(ν=vs, A=A, k=k, τ=t0)
-
-            # Check if t > t0 for LBA
-            lba_dens = 0.0
-            if t > t0
-                # Sum pdf of all possible choices
-                lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
-            end
-
-            # Express PDF
-            exp_dens = pdf(Normal(mu_exp, sig_exp), t)
-
-            # Mixture
-            avg_pdf += (p_exp * exp_dens) + ((1-p_exp) * lba_dens)
+    # Get unique reward structures to properly weight the unconditional PDF
+    # Use string representation as key since arrays can't be dict keys directly
+    reward_counts = Dict()
+    reward_arrays = Dict()  # Store actual arrays
+    for rewards in data.ParsedRewards
+        key = string(rewards)  # Use string representation as key
+        if !haskey(reward_counts, key)
+            reward_counts[key] = 0
+            reward_arrays[key] = rewards
         end
-        y_pred[j] = avg_pdf / n_samples
+        reward_counts[key] += 1
     end
 
-    plot!(t_grid, y_pred, label="Model Prediction", linewidth=3, color=:red)
+    # Compute PDF for each unique reward structure and weight by frequency
+    total_weight = 0.0
+    for (key, rewards) in reward_arrays
+        weight = reward_counts[key]
+        total_weight += weight
 
-    savefig(output_plot)
+        # Reconstruct parameters for this reward structure
+        ws = 1.0 .+ (w_slope .* rewards)
+        vs = C .* (ws ./ sum(ws))
+
+        # LBA PDF (summed over all choices)
+        lba = LBA(ν=vs, A=A, k=k, τ=t0)
+
+        for (j, t) in enumerate(t_grid)
+            # LBA component
+            lba_dens = 0.0
+            if t > t0
+                try
+                    # Sum pdf of all possible choices
+                    lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
+                    if isnan(lba_dens) || isinf(lba_dens)
+                        lba_dens = 0.0
+                    end
+                catch
+                    lba_dens = 0.0
+                end
+            end
+
+            # Express component
+            exp_dens = pdf(Normal(mu_exp, sig_exp), t)
+            if isnan(exp_dens) || isinf(exp_dens)
+                exp_dens = 0.0
+            end
+
+            # Weighted mixture components
+            y_pred_express[j] += weight * p_exp * exp_dens
+            y_pred_lba[j] += weight * (1-p_exp) * lba_dens
+            y_pred_total[j] += weight * ((p_exp * exp_dens) + ((1-p_exp) * lba_dens))
+        end
+    end
+
+    # Normalize by total weight
+    if total_weight > 0
+        y_pred_total ./= total_weight
+        y_pred_express ./= total_weight
+        y_pred_lba ./= total_weight
+    end
+
+    # Plot components separately to show bimodality
+    if p_exp > 1e-6  # Only show express component if it's non-negligible
+        plot!(p, t_grid, y_pred_express, label="Express Component (p=$(round(p_exp, digits=3)))", 
+              linewidth=2, color=:orange, linestyle=:dash, alpha=0.7)
+    end
+    
+    plot!(p, t_grid, y_pred_lba, label="LBA Component (p=$(round(1-p_exp, digits=3)))", 
+          linewidth=2, color=:green, linestyle=:dash, alpha=0.7)
+    
+    plot!(p, t_grid, y_pred_total, label="Total Mixture", linewidth=3, color=:red)
+
+    # Add diagnostic text
+    if p_exp < 1e-6
+        annotate!(p, 0.7, maximum(y_pred_total) * 0.8, 
+                  text("⚠ Express component collapsed (p_exp ≈ 0)", :red, :left, 10))
+    end
+
+    savefig(p, output_plot)
     println("Saved plot to $output_plot")
+    println("  Express probability: $(round(p_exp, digits=6))")
+    println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
 end
 
 end # module
