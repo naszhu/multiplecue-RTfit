@@ -148,34 +148,65 @@ function load_and_process_data(path, file_pattern="*.dat")
 
     # Determine Choice
     choices = Int[]
-    for row in eachrow(full_df)
+    mismatches = 0
+    mismatch_details = []
+    
+    for (row_idx, row) in enumerate(eachrow(full_df))
         c = 0
         n_options = length(row.ParsedRewards)
+        choice_from_pt = 0
+        choice_from_crv = 0
 
-        # Strategy A: Infer from CueResponseValue (most reliable - directly gives reward value chosen)
-        # This is the most accurate because it directly indicates which reward value was selected
-        if "CueResponseValue" in names(full_df)
-            val = parse_clean_float(row.CueResponseValue)
-            if !ismissing(val)
-                idx = findfirst(x -> x == val, row.ParsedRewards)
-                if !isnothing(idx)
-                    
-                    c = idx
-                end
-            else
-                error("CueResponseValue is missing")
-            end
-        end
-
-        # Strategy B: Check PointTargetResponse if CueResponseValue failed
-        # This handles cases where CueResponseValue might be missing or ambiguous
-        if c == 0 && "PointTargetResponse" in names(full_df)
+        # Strategy A: Use PointTargetResponse directly (primary method)
+        # PointTargetResponse directly indicates which position was clicked (1-4)
+        if "PointTargetResponse" in names(full_df)
             val = parse_clean_float(row.PointTargetResponse)
             if !ismissing(val)
                 c_candidate = Int(val)
                 # Validate: PointTargetResponse must be within bounds
                 if c_candidate > 0 && c_candidate <= n_options
+                    choice_from_pt = c_candidate
                     c = c_candidate
+                end
+            end
+        end
+
+        # Validation: Check if Choice from PointTargetResponse matches CueResponseValue
+        # Verify that the reward value at the chosen position matches CueResponseValue
+        if choice_from_pt > 0 && "CueResponseValue" in names(full_df)
+            crv_val = parse_clean_float(row.CueResponseValue)
+            if !ismissing(crv_val)
+                # Check if the reward value at the chosen position matches CueResponseValue
+                expected_reward = row.ParsedRewards[choice_from_pt]
+                if crv_val != expected_reward
+                    mismatches += 1
+                    if length(mismatch_details) < 10  # Store first 10 mismatches for reporting
+                        push!(mismatch_details, (
+                            row=row_idx,
+                            PointTargetResponse=row.PointTargetResponse,
+                            CueResponseValue=row.CueResponseValue,
+                            Choice_from_PT=choice_from_pt,
+                            ExpectedReward_at_PT=expected_reward,
+                            CueValues=row.CueValues,
+                            ParsedRewards=row.ParsedRewards
+                        ))
+                    end
+                end
+            end
+        end
+
+        # Strategy B: Infer from CueResponseValue if PointTargetResponse failed
+        # This handles cases where PointTargetResponse might be missing or invalid
+        if c == 0 && "CueResponseValue" in names(full_df)
+            val = parse_clean_float(row.CueResponseValue)
+            if !ismissing(val)
+                # Find all positions with this reward value
+                matching_indices = findall(x -> x == val, row.ParsedRewards)
+                if !isempty(matching_indices)
+                    # If multiple positions have the same reward value, use first match
+                    # (This is ambiguous, but we have no other information)
+                    choice_from_crv = matching_indices[1]
+                    c = choice_from_crv
                 end
             end
         end
@@ -193,6 +224,25 @@ function load_and_process_data(path, file_pattern="*.dat")
         end
 
         push!(choices, c)
+    end
+    
+    # Report validation results
+    if mismatches > 0
+        println("\n⚠️  WARNING: Found $mismatches mismatches between PointTargetResponse and CueResponseValue")
+        println("   (Reward value at chosen position ≠ CueResponseValue)")
+        if !isempty(mismatch_details)
+            println("\n   First $(length(mismatch_details)) example mismatches:")
+            for (i, detail) in enumerate(mismatch_details)
+                println("   Mismatch $i (Row $(detail.row)):")
+                println("     PointTargetResponse: $(detail.PointTargetResponse) → Choice = $(detail.Choice_from_PT)")
+                println("     Reward at position $(detail.Choice_from_PT): $(detail.ExpectedReward_at_PT)")
+                println("     CueResponseValue: $(detail.CueResponseValue)")
+                println("     CueValues: $(detail.CueValues) → ParsedRewards: $(detail.ParsedRewards)")
+            end
+        end
+        println("\n   Note: Using Choice from PointTargetResponse (Strategy A) as it directly indicates response location.")
+    else
+        println("\n✓ Validation passed: All PointTargetResponse choices match CueResponseValue")
     end
     full_df.Choice = choices
 
