@@ -9,7 +9,7 @@ using DataFrames
 using Distributions
 using SequentialSamplingModels
 
-export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike
+export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike, mis_lba_single_loglike
 
 """
     mis_lba_mixture_loglike(params, df::DataFrame)
@@ -179,6 +179,83 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
 
         if lik_tot <= 1e-20 lik_tot = 1e-20 end
         total_neg_ll -= log(lik_tot)
+    end
+
+    return total_neg_ll
+end
+
+"""
+    mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
+
+    Computes the negative log-likelihood for a single LBA model (no mixture).
+    This model uses ONE LBA component to fit the entire RT distribution.
+
+    Parameters:
+    - C: Capacity parameter (drift rate scaling)
+    - w_slope: Reward weight slope
+    - A: Maximum start point variability
+    - k: Threshold gap (b - A)
+    - t0: Non-decision time
+    - r_max: Optional maximum reward value across entire experiment.
+             If not provided, computed from df (for backward compatibility).
+
+    Returns negative log-likelihood (to be minimized).
+"""
+function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
+    # Unpack parameters
+    C, w_slope, A, k, t0 = params
+
+    # Constraints (strict check to prevent integrator errors)
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+        return Inf
+    end
+
+    total_neg_ll = 0.0
+
+    # Compute r_max: use provided value, or compute from dataset if not provided
+    if isnothing(r_max)
+        # Fallback: compute from current dataset (for backward compatibility)
+        r_max = 0.0
+        for rewards in df.ParsedRewards
+            if !isempty(rewards)
+                r_max = max(r_max, maximum(rewards))
+            end
+        end
+    end
+    # Avoid division by zero if all rewards are 0
+    if r_max <= 0.0
+        r_max = 1.0
+    end
+
+    # Accumulate log-likelihood across all trials
+    for i in 1:nrow(df)
+        rt = df.CleanRT[i]
+        choice = df.Choice[i]
+        rewards = df.ParsedRewards[i]
+
+        # --- MIS THEORY ---
+        # Weight = exp(θ * r / r_max) as per paper
+        # Exponential weighting allows winner-take-all behavior
+        weights = exp.(w_slope .* rewards ./ r_max)
+        rel_weights = weights ./ sum(weights)
+        drift_rates = C .* rel_weights
+
+        # --- SINGLE LBA ---
+        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
+        lik = 0.0
+        if rt > t0
+            try
+                lik = pdf(lba, (choice=choice, rt=rt))
+                if isnan(lik) || isinf(lik) lik = 1e-10 end
+            catch
+                lik = 1e-10
+            end
+        else
+            lik = 1e-10
+        end
+
+        if lik <= 1e-20 lik = 1e-20 end
+        total_neg_ll -= log(lik)
     end
 
     return total_neg_ll
