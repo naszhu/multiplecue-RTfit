@@ -18,7 +18,7 @@ export fit_model, save_results, generate_plot, save_results_dual, generate_plot_
 
 """
     fit_model(data::DataFrame, objective_func;
-              lower, upper, x0, time_limit=600.0)
+              lower, upper, x0, time_limit=600.0, r_max=nothing)
 
     Fits the model using optimization.
 
@@ -29,15 +29,21 @@ export fit_model, save_results, generate_plot, save_results_dual, generate_plot_
     - upper: Vector of upper bounds for parameters
     - x0: Vector of initial parameter values
     - time_limit: Maximum time in seconds for optimization
+    - r_max: Optional maximum reward value to pass to objective_func
 
     Returns:
     - result: Optim optimization result object
 """
 function fit_model(data::DataFrame, objective_func;
-                   lower, upper, x0, time_limit=600.0)
+                   lower, upper, x0, time_limit=600.0, r_max=nothing)
     println("Fitting model (this may take a minute)...")
 
-    func = x -> objective_func(x, data)
+    # Create wrapper function that passes r_max if provided
+    if isnothing(r_max)
+        func = x -> objective_func(x, data)
+    else
+        func = x -> objective_func(x, data; r_max=r_max)
+    end
 
     opt_options = Optim.Options(time_limit = time_limit, show_trace = true, show_every=5)
 
@@ -305,7 +311,7 @@ function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condi
 end
 
 """
-    generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+    generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing)
 
     Generates a plot for dual-LBA mixture model showing both LBA components separately.
 
@@ -314,8 +320,9 @@ end
     - params: Vector of model parameters [C, w, A1, k1, t0_1, A2, k2, t0_2, p_mix]
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title
+    - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing)
     println("Generating plot for dual-LBA model...")
 
     # Unpack parameters
@@ -373,16 +380,18 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     y_pred_distractor_lba1 = zeros(length(t_grid))
     y_pred_distractor_lba2 = zeros(length(t_grid))
 
-    # Compute r_max: maximum reward value across all trials
-    r_max = 0.0
-    for rewards in data.ParsedRewards
-        if !isempty(rewards)
-            r_max = max(r_max, maximum(rewards))
+    # Compute r_max: use provided value, or compute from dataset if not provided
+    if isnothing(r_max)
+        r_max = 0.0
+        for rewards in data.ParsedRewards
+            if !isempty(rewards)
+                r_max = max(r_max, maximum(rewards))
+            end
         end
-    end
-    # Avoid division by zero if all rewards are 0
-    if r_max <= 0.0
-        r_max = 1.0
+        # Avoid division by zero if all rewards are 0
+        if r_max <= 0.0
+            r_max = 1.0
+        end
     end
 
     # Get unique reward structures
@@ -524,7 +533,7 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
 end
 
 """
-    generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing)
+    generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing, r_max=nothing)
 
     Generates a plot showing observed vs predicted choice probability for the target option
     (highest reward option). Groups by CueCondition to match experimental design.
@@ -534,22 +543,25 @@ end
     - params: Vector of model parameters [C, w, A1, k1, t0_1, A2, k2, t0_2, p_mix]
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title (if provided, shows only that condition)
+    - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing)
+function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing, r_max=nothing)
     println("Generating accuracy plot for dual-LBA model...")
 
     # Unpack parameters
     C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
-    # Compute r_max: maximum reward value across all trials
-    r_max = 0.0
-    for rewards in data.ParsedRewards
-        if !isempty(rewards)
-            r_max = max(r_max, maximum(rewards))
+    # Compute r_max: use provided value, or compute from dataset if not provided
+    if isnothing(r_max)
+        r_max = 0.0
+        for rewards in data.ParsedRewards
+            if !isempty(rewards)
+                r_max = max(r_max, maximum(rewards))
+            end
         end
-    end
-    if r_max <= 0.0
-        r_max = 1.0
+        if r_max <= 0.0
+            r_max = 1.0
+        end
     end
 
     # Check if CueCondition column exists
@@ -784,7 +796,7 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
 end
 
 """
-    generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png")
+    generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
 
     Generates one overall accuracy plot showing all CueConditions together.
     Uses condition-specific fitted parameters for each condition.
@@ -792,8 +804,9 @@ end
     Arguments:
     - condition_fits: Dictionary mapping CueCondition => (data=DataFrame, params=Vector)
     - output_plot: Output filename for plot
+    - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png")
+function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
     println("Generating overall accuracy plot for all conditions...")
     
     observed_acc = Float64[]
@@ -815,15 +828,20 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
         # Unpack parameters for this condition
         C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
         
-        # Compute r_max for this condition
-        r_max = 0.0
-        for rewards in condition_data.ParsedRewards
-            if !isempty(rewards)
-                r_max = max(r_max, maximum(rewards))
+        # Compute r_max: use provided value, or compute from condition data if not provided
+        if isnothing(r_max)
+            r_max_cond = 0.0
+            for rewards in condition_data.ParsedRewards
+                if !isempty(rewards)
+                    r_max_cond = max(r_max_cond, maximum(rewards))
+                end
             end
-        end
-        if r_max <= 0.0
-            r_max = 1.0
+            if r_max_cond <= 0.0
+                r_max_cond = 1.0
+            end
+            r_max_use = r_max_cond
+        else
+            r_max_use = r_max
         end
         
         # Group by unique reward structures within this condition
@@ -861,7 +879,7 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
             total_trials += n_trials
             
             # Predicted accuracy for this reward structure using THIS condition's parameters
-            ws = exp.(w_slope .* rewards ./ r_max)
+            ws = exp.(w_slope .* rewards ./ r_max_use)
             vs = C .* (ws ./ sum(ws))
             
             lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)

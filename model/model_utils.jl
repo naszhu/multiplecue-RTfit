@@ -85,7 +85,7 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
 end
 
 """
-    mis_lba_dual_mixture_loglike(params, df::DataFrame)
+    mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
 
     Computes the negative log-likelihood for a dual-LBA mixture model.
     This model uses TWO LBA components with different parameters to capture
@@ -101,10 +101,12 @@ end
     - k2: Threshold gap for LBA component 2 (b - A)
     - t0_2: Non-decision time for LBA component 2
     - p_mix: Probability of using LBA component 1 (vs component 2)
+    - r_max: Optional maximum reward value across entire experiment.
+             If not provided, computed from df (for backward compatibility).
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_dual_mixture_loglike(params, df::DataFrame)
+function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
     # Unpack parameters
     C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
@@ -116,11 +118,14 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
 
     total_neg_ll = 0.0
 
-    # Compute r_max: maximum reward value across all trials in dataset
-    r_max = 0.0
-    for rewards in df.ParsedRewards
-        if !isempty(rewards)
-            r_max = max(r_max, maximum(rewards))
+    # Compute r_max: use provided value, or compute from dataset if not provided
+    if isnothing(r_max)
+        # Fallback: compute from current dataset (for backward compatibility)
+        r_max = 0.0
+        for rewards in df.ParsedRewards
+            if !isempty(rewards)
+                r_max = max(r_max, maximum(rewards))
+            end
         end
     end
     # Avoid division by zero if all rewards are 0
