@@ -39,7 +39,15 @@ function fit_model(data::DataFrame, objective_func;
         func = x -> objective_func(x, data; r_max=r_max)
     end
 
-    opt_options = Optim.Options(time_limit = time_limit, show_trace = false)
+    # More tolerant convergence criteria for faster optimization
+    opt_options = Optim.Options(
+        time_limit = time_limit,
+        show_trace = false,
+        g_tol = 1e-4,      # Gradient tolerance (default: 1e-8, less strict = faster)
+        f_tol = 1e-6,      # Function tolerance (default: 0, less strict = faster)
+        x_tol = 1e-6,      # Parameter tolerance (default: 0, less strict = faster)
+        iterations = 1000  # Max iterations (prevents excessive optimization)
+    )
 
     res = optimize(func, lower, upper, x0, Fminbox(BFGS()), opt_options;
                    autodiff=:forward)
@@ -48,6 +56,9 @@ function fit_model(data::DataFrame, objective_func;
     println("\n--- Optimization Complete ---")
     println("Best Params: $best")
     println("Min LogLikelihood: $(Optim.minimum(res))")
+    println("Iterations: $(Optim.iterations(res))")
+    println("Function evaluations: $(Optim.f_calls(res))")
+    println("Gradient evaluations: $(Optim.g_calls(res))")
 
     return res
 end
