@@ -18,7 +18,7 @@ export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike
 
     Parameters:
     - C: Capacity parameter (drift rate scaling)
-    - w_slope: Reward weight slope
+    - w_slope: Reward weight slope (exponential gain parameter θ)
     - A: Maximum start point variability in LBA
     - k: Threshold gap (b - A)
     - t0: Non-decision time
@@ -38,6 +38,9 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
         return Inf
     end
 
+    # Calculate r_max as the maximum reward across the entire experiment
+    r_max = maximum(maximum(r) for r in df.ParsedRewards if !isempty(r))
+
     total_neg_ll = 0.0
     dist_express = Normal(mu_exp, sig_exp)
 
@@ -48,9 +51,10 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = 1 + w * Reward
-        # We add 1.0 to base weight to ensure drift > 0 even for 0 reward
-        weights = 1.0 .+ (w_slope .* rewards)
+        # Exponential attentional weight function (Kyllingsbæk et al., 2025)
+        # ω_r = exp(θ * r / r_max)
+        # where θ is the exponential gain parameter (w_slope)
+        weights = exp.(w_slope .* rewards ./ r_max)
         rel_weights = weights ./ sum(weights)
         drift_rates = C .* rel_weights
 
@@ -93,7 +97,7 @@ end
 
     Parameters:
     - C: Capacity parameter (drift rate scaling)
-    - w_slope: Reward weight slope
+    - w_slope: Reward weight slope (exponential gain parameter θ)
     - A1: Maximum start point variability for LBA component 1 (fast mode)
     - k1: Threshold gap for LBA component 1 (b - A)
     - t0_1: Non-decision time for LBA component 1
@@ -114,6 +118,9 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         return Inf
     end
 
+    # Calculate r_max as the maximum reward across the entire experiment
+    r_max = maximum(maximum(r) for r in df.ParsedRewards if !isempty(r))
+
     total_neg_ll = 0.0
 
     # Accumulate log-likelihood across all trials
@@ -123,9 +130,10 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = 1 + w * Reward
-        # We add 1.0 to base weight to ensure drift > 0 even for 0 reward
-        weights = 1.0 .+ (w_slope .* rewards)
+        # Exponential attentional weight function (Kyllingsbæk et al., 2025)
+        # ω_r = exp(θ * r / r_max)
+        # where θ is the exponential gain parameter (w_slope)
+        weights = exp.(w_slope .* rewards ./ r_max)
         rel_weights = weights ./ sum(weights)
         drift_rates = C .* rel_weights
 
