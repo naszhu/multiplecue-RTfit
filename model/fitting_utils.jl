@@ -45,7 +45,7 @@ function fit_model(data::DataFrame, objective_func;
         func = x -> objective_func(x, data; r_max=r_max)
     end
 
-    opt_options = Optim.Options(time_limit = time_limit, show_trace = true, show_every=5)
+    opt_options = Optim.Options(time_limit = time_limit, show_trace = false)
 
     res = optimize(func, lower, upper, x0, Fminbox(BFGS()), opt_options;
                    autodiff=:forward)
