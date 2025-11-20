@@ -107,6 +107,8 @@ function run_analysis()
     all_results = DataFrame[]
     # Store fitted parameters and data for overall accuracy plot
     condition_fits = Dict()
+    # Store individual plot objects for combined plot
+    individual_plots = []
     
     # Step 4: Fit model for each cue condition
     for (idx, cue_cond) in enumerate(cue_conditions)
@@ -141,9 +143,10 @@ function run_analysis()
         
         # Generate plots for this condition
         plot_path = joinpath(images_dir, "model_fit_plot_dual_condition_$(cue_cond).png")
-        generate_plot_dual(condition_data, best_params,
-                          plot_path;
-                          cue_condition=cue_cond, r_max=r_max, config=plot_config)
+        p = generate_plot_dual(condition_data, best_params,
+                              plot_path;
+                              cue_condition=cue_cond, r_max=r_max, config=plot_config)
+        push!(individual_plots, p)
     end
     
     # Step 4.5: Generate overall accuracy plot showing all conditions
@@ -154,6 +157,37 @@ function run_analysis()
         
         overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_all_conditions.png")
         generate_overall_accuracy_plot(condition_fits, overall_accuracy_plot; r_max=r_max)
+    end
+    
+    # Step 4.6: Generate combined RT fit plot for all conditions
+    if !isempty(individual_plots)
+        println("\n" * "=" ^ 70)
+        println("GENERATING COMBINED RT FIT PLOT FOR ALL CONDITIONS")
+        println("=" ^ 70)
+        
+        # Calculate grid dimensions (aim for roughly square layout)
+        n_plots = length(individual_plots)
+        n_cols = ceil(Int, sqrt(n_plots))
+        n_rows = ceil(Int, n_plots / n_cols)
+        
+        # Create combined plot with larger fonts
+        # Font sizes are set globally and should apply to all subplots
+        combined_plot = plot(individual_plots..., 
+                            layout=(n_rows, n_cols),
+                            size=(n_cols * 600, n_rows * 500),
+                            plot_title="Dual-LBA Mixture Fit - All Conditions",
+                            plot_titlefontsize=18,
+                            # Set font sizes for all subplots
+                            titlefontsize=14,
+                            legendfontsize=12,
+                            guidefontsize=14,
+                            tickfontsize=12,
+                            fontsize=12)  # Base font size
+        
+        # Save combined plot
+        combined_plot_path = joinpath(images_dir, "model_fit_plot_dual_all_conditions.png")
+        savefig(combined_plot, combined_plot_path)
+        println("Saved combined RT fit plot to $combined_plot_path")
     end
 
     # Step 5: Combine and save all results
@@ -197,6 +231,7 @@ end
 using Optim  # Needed for Optim.minimizer
 using CSV    # Needed for CSV.write
 using DataFrames  # Needed for DataFrame operations
+using Plots  # Needed for combining plots
 
 if abspath(PROGRAM_FILE) == @__FILE__
     run_analysis()

@@ -544,6 +544,8 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
     println("  LBA2 (slow) - t0: $(round(t0_2, digits=3))s, peak at: $(round(max_lba2_rt, digits=3))s")
     println("  Component separation: $(round(abs(max_lba1_rt - max_lba2_rt)*1000, digits=0))ms")
+    
+    return p
 end
 
 """
