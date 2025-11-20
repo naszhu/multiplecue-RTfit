@@ -135,6 +135,40 @@ function run_analysis()
         result = fit_model(condition_data, mis_lba_single_loglike;
                            lower=lower, upper=upper, x0=x0, time_limit=600.0, r_max=r_max)
 
+        # Print all parameters (optimized and fixed)
+        println("\n" * "=" ^ 70)
+        println("FITTED PARAMETERS FOR CUE CONDITION: $cue_cond")
+        println("=" ^ 70)
+        
+        best_params = Optim.minimizer(result)
+        param_names = ["C", "w_slope", "A", "k", "t0"]
+        
+        println("\n--- OPTIMIZED PARAMETERS (in search) ---")
+        for (i, name) in enumerate(param_names)
+            println("  $name = $(round(best_params[i], digits=6))  [bounds: $(lower[i]) - $(upper[i])]")
+        end
+        
+        println("\n--- FIXED PARAMETERS (out of search) ---")
+        println("  r_max = $r_max  (experiment-wide maximum reward, used for MIS weight normalization)")
+        
+        println("\n--- PARAMETER DESCRIPTIONS ---")
+        println("  C: Capacity parameter (drift rate scaling)")
+        println("  w_slope: Reward weight slope (θ in MIS theory: exp(θ * r / r_max))")
+        println("  A: Maximum start point variability in LBA")
+        println("  k: Threshold gap in LBA (b - A, where b is decision threshold)")
+        println("  t0: Non-decision time in LBA")
+        println("  r_max: Maximum reward value across entire experiment (fixed, not optimized)")
+        
+        println("\n--- MIS THEORY PARAMETERS ---")
+        println("  Weight calculation: w_i = exp(w_slope * r_i / r_max)")
+        println("  Relative weights: rel_w_i = w_i / Σw_j")
+        println("  Drift rates: ν_i = C * rel_w_i")
+        
+        println("\n--- LBA PARAMETERS ---")
+        println("  LBA model: LBA(ν=drift_rates, A=A, k=k, τ=t0)")
+        println("  where: ν = drift rates (vector), A = max start point, k = threshold gap, τ = non-decision time")
+        println("=" ^ 70)
+
         # Save results for this condition
         results_df = save_results_single(result,
                                        "model_fit_results_single_P$(data_config.participant_id)_condition_$(cue_cond).csv";
