@@ -4,6 +4,19 @@
 *.jpg
 *.jpeg
 *.gif
+*.pdf
+*.eps
+*.svg
+*.tiff
+*.bmp
+*.ico
+*.webp
+*.heic
+*.heif
+*.heif-srgb
+*.heif-srgb-alpha
+*.heif-srgb-alpha-heic
+*.heif-srgb-alpha-heic-srgb
 
 data/
 paper/

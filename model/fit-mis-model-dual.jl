@@ -1,24 +1,20 @@
 # ==========================================================================
-# MIS-LBA Mixture Model Fitting Script (Modular Version)
+# MIS-LBA Dual Mixture Model Fitting Script
 # ==========================================================================
 #
-# This script fits a mixture model combining:
-# - MIS (Multiple-cue Intention Selection) theory for decision-making
-# - LBA (Linear Ballistic Accumulator) for response time modeling
-# - Express response component for fast guesses
+# This script fits a dual-LBA mixture model that uses TWO LBA components
+# with different parameters to capture bimodality, rather than LBA + express.
 #
-# The code is organized into modules:
-# - data_utils.jl: Data reading and preprocessing
-# - model_utils.jl: Model likelihood calculations
-# - fitting_utils.jl: Optimization and visualization
+# The model assumes bimodality comes from two different decision processes:
+# - LBA Component 1: Fast mode (lower thresholds, faster non-decision time)
+# - LBA Component 2: Slow mode (higher thresholds, slower non-decision time)
+#
+# This is more appropriate when bimodality is within the normal LBA range
+# rather than from express responses (< 0.3s).
 #
 # ==========================================================================
 
 using Pkg
-
-# Ensure required packages are installed
-# Uncomment if needed:
-# Pkg.add(["CSV", "DataFrames", "Glob", "Distributions", "SequentialSamplingModels", "Optim", "Statistics", "Random", "Plots"])
 
 # Load utility modules
 include("data_utils.jl")
@@ -35,8 +31,8 @@ using .FittingUtils
 
 const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
 const FILE_PATTERN = "*.dat"
-const OUTPUT_CSV = "model_fit_results.csv"
-const OUTPUT_PLOT = "model_fit_plot.png"
+const OUTPUT_CSV = "model_fit_results_dual.csv"
+const OUTPUT_PLOT = "model_fit_plot_dual.png"
 
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
@@ -72,21 +68,41 @@ function run_analysis()
         println("  $i. CueCondition $cc: $n_trials trials")
     end
 
-    # Step 2: Set up optimization parameters
+    # Step 2: Compute r_max from entire experiment (for consistent normalization)
     println("\n" * "=" ^ 70)
-    println("FITTING MODEL FOR EACH CUE CONDITION")
+    println("COMPUTING EXPERIMENT-WIDE r_max")
+    println("=" ^ 70)
+    r_max = 0.0
+    for rewards in data.ParsedRewards
+        if !isempty(rewards)
+            r_max = max(r_max, maximum(rewards))
+        end
+    end
+    if r_max <= 0.0
+        r_max = 1.0
+    end
+    println("r_max (maximum reward across entire experiment): $r_max")
+    println("This value will be used consistently across all conditions for weight normalization.")
+
+    # Step 3: Set up optimization parameters
+    println("\n" * "=" ^ 70)
+    println("FITTING DUAL-LBA MODEL FOR EACH CUE CONDITION")
     println("=" ^ 70)
 
-    # Parameter bounds and initial values
-    # [C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp]
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05, 0.0,  0.05,  0.001]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.6,  0.8,  0.20,  0.1]
-    x0    = [10.0, 1.0,   0.3,  0.3,  0.2,  0.2,  0.10,  0.02]
+    # Parameter bounds and initial values for dual-LBA model
+    # [C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix]
+    # Component 1 (fast): lower thresholds, faster t0
+    # Component 2 (slow): higher thresholds, slower t0
+    lower = [1.0,  0.0,   0.01, 0.05, 0.05,  0.01, 0.05, 0.15,  0.0]
+    upper = [30.0, 10.0,  1.0,  1.0,  0.4,   1.0,  1.0,  0.6,   0.99]
+    x0    = [10.0, 1.0,   0.2,  0.2,  0.2,   0.3,  0.3,  0.35,  0.4]
 
     # Store all results
     all_results = DataFrame[]
+    # Store fitted parameters and data for overall accuracy plot
+    condition_fits = Dict()
     
-    # Step 3: Fit model for each cue condition
+    # Step 4: Fit model for each cue condition
     for (idx, cue_cond) in enumerate(cue_conditions)
         println("\n" * "-" ^ 70)
         println("FITTING CUE CONDITION: $cue_cond ($idx/$(length(cue_conditions)))")
@@ -102,25 +118,39 @@ function run_analysis()
             continue
         end
 
-        # Fit the model for this condition
-        result = fit_model(condition_data, mis_lba_mixture_loglike;
-                           lower=lower, upper=upper, x0=x0, time_limit=600.0)
+        # Fit the dual-LBA model for this condition
+        # Pass r_max to ensure consistent normalization across all conditions
+        result = fit_model(condition_data, mis_lba_dual_mixture_loglike;
+                           lower=lower, upper=upper, x0=x0, time_limit=600.0, r_max=r_max)
 
         # Save results for this condition
-        results_df = save_results(result, 
-                                   "model_fit_results_condition_$(cue_cond).csv";
-                                   cue_condition=cue_cond)
+        results_df = save_results_dual(result, 
+                                       "model_fit_results_dual_condition_$(cue_cond).csv";
+                                       cue_condition=cue_cond)
         push!(all_results, results_df)
         
-        # Generate plot for this condition
+        # Store for overall accuracy plot
         best_params = Optim.minimizer(result)
-        plot_path = joinpath(images_dir, "model_fit_plot_condition_$(cue_cond).png")
-        generate_plot(condition_data, best_params, 
-                      plot_path;
-                      cue_condition=cue_cond)
+        condition_fits[cue_cond] = (data=condition_data, params=best_params)
+        
+        # Generate plots for this condition
+        plot_path = joinpath(images_dir, "model_fit_plot_dual_condition_$(cue_cond).png")
+        generate_plot_dual(condition_data, best_params, 
+                          plot_path;
+                          cue_condition=cue_cond, r_max=r_max)
+    end
+    
+    # Step 4.5: Generate overall accuracy plot showing all conditions
+    if !isempty(condition_fits)
+        println("\n" * "=" ^ 70)
+        println("GENERATING OVERALL ACCURACY PLOT")
+        println("=" ^ 70)
+        
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_all_conditions.png")
+        generate_overall_accuracy_plot(condition_fits, overall_accuracy_plot; r_max=r_max)
     end
 
-    # Step 4: Combine and save all results
+    # Step 5: Combine and save all results
     println("\n" * "=" ^ 70)
     println("SAVING COMBINED RESULTS")
     println("=" ^ 70)
@@ -140,6 +170,8 @@ function run_analysis()
     println("=" ^ 70)
     println("Combined results saved to: $OUTPUT_CSV")
     println("Individual condition results and plots saved with condition-specific filenames")
+    println("\nNote: This model uses TWO LBA components to capture bimodality,")
+    println("      rather than LBA + express responses.")
 end
 
 # ==========================================================================
@@ -153,3 +185,4 @@ using DataFrames  # Needed for DataFrame operations
 if abspath(PROGRAM_FILE) == @__FILE__
     run_analysis()
 end
+
