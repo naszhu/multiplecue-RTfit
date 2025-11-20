@@ -89,13 +89,10 @@ function run_analysis()
     for rewards in data.ParsedRewards
         if !isempty(rewards)
             r_max = max(r_max, maximum(rewards))
-            @assert r_max == 4 "rmax calculated incorrectly"
         end
     end
-    if r_max <= 0.0
-        error("r_max should not smaller than 0")
-        r_max = 1.0
-    end
+    @assert r_max == 4 "rmax calculated incorrectly current number is: $(r_max)"
+
     println("r_max (maximum reward across entire experiment): $r_max")
     println("This value will be used consistently across all conditions for weight normalization.")
 

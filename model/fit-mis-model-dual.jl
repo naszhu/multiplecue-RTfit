@@ -32,7 +32,7 @@ using .Config
 # ==========================================================================
 
 # ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 3  # Options: 1, 2, or 3
+const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
 # ========================================================
 
 const OUTPUT_CSV = "model_fit_results_dual.csv"
@@ -88,17 +88,32 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("COMPUTING EXPERIMENT-WIDE r_max")
     println("=" ^ 70)
+    
+    # Find maximum reward across all trials in the entire experiment
+    # ParsedRewards is a column where each element is an array like [0.0, 4.0, 1.0, 0.0]
+    # We need to find the maximum value across all arrays
     r_max = 0.0
     for rewards in data.ParsedRewards
         if !isempty(rewards)
             r_max = max(r_max, maximum(rewards))
-            @assert r_max == 4 "rmax calculated incorrectly"
         end
     end
+    
+    # Check assertion after processing all rewards
     if r_max <= 0.0
         r_max = 1.0
     end
+    
+    # Optional: Show some examples of ParsedRewards for debugging
+    println("Sample ParsedRewards examples:")
+    for (i, rewards) in enumerate(data.ParsedRewards[1:min(5, nrow(data))])
+        if !isempty(rewards)
+            println("  Row $i: $rewards")
+        end
+    end
+    
     println("r_max (maximum reward across entire experiment): $r_max")
+    @assert r_max == 4 "rmax calculated incorrectly: expected 4, got $r_max"
     println("This value will be used consistently across all conditions for weight normalization.")
 
     # Step 3: Set up optimization parameters
