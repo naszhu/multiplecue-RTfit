@@ -33,26 +33,24 @@ Preprocess data to group trials by unique reward configurations.
 This dramatically speeds up likelihood computation by computing drift rates only once per unique configuration.
 """
 function preprocess_data_for_fitting(df::DataFrame)
-    # Find unique reward configurations
-    unique_rewards = unique(df.ParsedRewards)
-    n_unique = length(unique_rewards)
+    # Use tuple keys so identical reward sets hash by value, not object id
+    reward_to_idx = Dict{Tuple{Vararg{Float64}}, Int}()
+    unique_rewards = Vector{Vector{Float64}}()
+    trial_groups = Vector{Vector{Int}}()
 
-    # Group trial indices by reward configuration
-    trial_groups = Vector{Vector{Int}}(undef, n_unique)
-    for i in 1:n_unique
-        trial_groups[i] = Int[]
-    end
-
-    # Map each trial to its reward configuration group
-    reward_to_idx = Dict{Vector{Float64}, Int}()
-    for (idx, rewards) in enumerate(unique_rewards)
-        reward_to_idx[rewards] = idx
-    end
-
-    for trial_idx in 1:nrow(df)
-        group_idx = reward_to_idx[df.ParsedRewards[trial_idx]]
+    for (trial_idx, rewards) in enumerate(df.ParsedRewards)
+        key = Tuple(rewards)
+        group_idx = get(reward_to_idx, key, 0)
+        if group_idx == 0
+            push!(unique_rewards, rewards)
+            push!(trial_groups, Int[])
+            group_idx = length(unique_rewards)
+            reward_to_idx[key] = group_idx
+        end
         push!(trial_groups[group_idx], trial_idx)
     end
+
+    n_unique = length(unique_rewards)
 
     # Extract RT and choice arrays for fast access
     rts = Vector{Float64}(df.CleanRT)
@@ -192,18 +190,19 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
     w_slope_normalized = w_slope / r_max
 
     # Cache for drift rates based on reward configurations
-    drift_cache = Dict{Vector{Float64}, Any}()
+    drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
 
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
         choice = df.Choice[i]
         rewards = df.ParsedRewards[i]
+        key = Tuple(rewards)
 
         # --- MIS THEORY ---
         # Check if we've already computed drift rates for this reward configuration
-        if haskey(drift_cache, rewards)
-            drift_rates = drift_cache[rewards]
+        if haskey(drift_cache, key)
+            drift_rates = drift_cache[key]
         else
             # Weight = exp(θ * r / r_max) as per paper
             # Exponential weighting allows winner-take-all behavior
@@ -211,7 +210,7 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
             rel_weights = weights ./ sum(weights)
             drift_rates = C .* rel_weights
             # Cache the result
-            drift_cache[rewards] = drift_rates
+            drift_cache[key] = drift_rates
         end
 
         # --- LBA COMPONENT 1 (Fast Mode) ---
@@ -301,18 +300,19 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
     w_slope_normalized = w_slope / r_max
 
     # Cache for drift rates based on reward configurations
-    drift_cache = Dict{Vector{Float64}, Any}()
+    drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
 
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
         choice = df.Choice[i]
         rewards = df.ParsedRewards[i]
+        key = Tuple(rewards)
 
         # --- MIS THEORY ---
         # Check if we've already computed drift rates for this reward configuration
-        if haskey(drift_cache, rewards)
-            drift_rates = drift_cache[rewards]
+        if haskey(drift_cache, key)
+            drift_rates = drift_cache[key]
         else
             # Weight = exp(θ * r / r_max) as per paper
             # Exponential weighting allows winner-take-all behavior
@@ -320,7 +320,7 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
             rel_weights = weights ./ sum(weights)
             drift_rates = C .* rel_weights
             # Cache the result
-            drift_cache[rewards] = drift_rates
+            drift_cache[key] = drift_rates
         end
 
         # --- SINGLE LBA ---
@@ -398,18 +398,19 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
     # Cache for drift rates based on reward configurations
     # Key: reward vector, Value: drift rates
     # Use Any to support both Float64 and ForwardDiff.Dual types during autodiff
-    drift_cache = Dict{Vector{Float64}, Any}()
+    drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
 
     # Accumulate log-likelihood across ALL trials from ALL conditions
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
         choice = df.Choice[i]
         rewards = df.ParsedRewards[i]
+        key = Tuple(rewards)
 
         # --- MIS THEORY ---
         # Check if we've already computed drift rates for this reward configuration
-        if haskey(drift_cache, rewards)
-            drift_rates = drift_cache[rewards]
+        if haskey(drift_cache, key)
+            drift_rates = drift_cache[key]
         else
             # Weight = exp(θ * r / r_max) as per paper
             # Exponential weighting allows winner-take-all behavior
@@ -417,7 +418,7 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
             rel_weights = weights ./ sum(weights)
             drift_rates = C .* rel_weights
             # Cache the result
-            drift_cache[rewards] = drift_rates
+            drift_cache[key] = drift_rates
         end
 
         # --- SINGLE LBA ---
@@ -466,7 +467,7 @@ function mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r
     w_slope_normalized = w_slope / r_max
 
     # Process each unique reward configuration
-    for (rewards, trial_indices) in zip(preprocessed.unique_rewards, preprocessed.trial_groups)
+    @inbounds for (rewards, trial_indices) in zip(preprocessed.unique_rewards, preprocessed.trial_groups)
         # Compute drift rates once for this configuration
         weights = exp.(w_slope_normalized .* rewards)
         rel_weights = weights ./ sum(weights)
