@@ -125,11 +125,13 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
         for rewards in df.ParsedRewards
             if !isempty(rewards)
                 r_max = max(r_max, maximum(rewards))
+                @assert r_max == 4 "rmax calculated incorrectly"
             end
         end
     end
     # Avoid division by zero if all rewards are 0
     if r_max <= 0.0
+        error("r_max should not smaller than 0")
         r_max = 1.0
     end
 
@@ -219,11 +221,13 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
         for rewards in df.ParsedRewards
             if !isempty(rewards)
                 r_max = max(r_max, maximum(rewards))
+                @assert r_max == 4 "rmax calculated incorrectly"
             end
         end
     end
     # Avoid division by zero if all rewards are 0
     if r_max <= 0.0
+        error("r_max should not smaller than 0")
         r_max = 1.0
     end
 

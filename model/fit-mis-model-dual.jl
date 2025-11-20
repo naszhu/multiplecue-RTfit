@@ -82,6 +82,7 @@ function run_analysis()
     for rewards in data.ParsedRewards
         if !isempty(rewards)
             r_max = max(r_max, maximum(rewards))
+            @assert r_max == 4 "rmax calculated incorrectly"
         end
     end
     if r_max <= 0.0
@@ -95,13 +96,11 @@ function run_analysis()
     println("FITTING DUAL-LBA MODEL FOR EACH CUE CONDITION")
     println("=" ^ 70)
 
-    # Parameter bounds and initial values for dual-LBA model
-    # [C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix]
-    # Component 1 (fast): lower thresholds, faster t0
-    # Component 2 (slow): higher thresholds, slower t0
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05,  0.01, 0.05, 0.15,  0.0]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.4,   1.0,  1.0,  0.6,   0.99]
-    x0    = [10.0, 1.0,   0.2,  0.2,  0.2,   0.3,  0.3,  0.35,  0.4]
+    # Get parameter bounds and initial values from configuration
+    params_config = get_default_dual_params()
+    lower = params_config.lower
+    upper = params_config.upper
+    x0 = params_config.x0
 
     # Store all results
     all_results = DataFrame[]

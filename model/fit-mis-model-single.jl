@@ -79,9 +79,11 @@ function run_analysis()
     for rewards in data.ParsedRewards
         if !isempty(rewards)
             r_max = max(r_max, maximum(rewards))
+            @assert r_max == 4 "rmax calculated incorrectly"
         end
     end
     if r_max <= 0.0
+        error("r_max should not smaller than 0")
         r_max = 1.0
     end
     println("r_max (maximum reward across entire experiment): $r_max")
@@ -92,11 +94,11 @@ function run_analysis()
     println("FITTING SINGLE LBA MODEL FOR EACH CUE CONDITION")
     println("=" ^ 70)
 
-    # Parameter bounds and initial values for single-LBA model
-    # [C, w_slope, A, k, t0]
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.6]
-    x0    = [10.0, 1.0,   0.2,  0.2,  0.25]
+    # Get parameter bounds and initial values from configuration
+    params_config = get_default_single_params()
+    lower = params_config.lower
+    upper = params_config.upper
+    x0 = params_config.x0
 
     # Store all results
     all_results = DataFrame[]
