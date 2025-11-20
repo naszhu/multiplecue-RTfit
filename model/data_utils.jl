@@ -68,10 +68,13 @@ function read_psychopy_dat(filepath)
     end
 
     try
+        # Force CueValues to be read as String to preserve leading zeros
+        # CueValues is always a 4-digit string (e.g., "0420", "1234")
         df = CSV.read(filepath, DataFrame;
                       delim='\t',
                       header=header_line,
-                      silencewarnings=true)
+                      silencewarnings=true,
+                      types=Dict("CueValues" => String))
         return df
     catch e
         println("Error reading $filepath: $e")
@@ -149,27 +152,30 @@ function load_and_process_data(path, file_pattern="*.dat")
         c = 0
         n_options = length(row.ParsedRewards)
 
-        # Strategy A: Check PointTargetResponse (most reliable when valid)
-        if "PointTargetResponse" in names(full_df)
+        # Strategy A: Infer from CueResponseValue (most reliable - directly gives reward value chosen)
+        # This is the most accurate because it directly indicates which reward value was selected
+        if "CueResponseValue" in names(full_df)
+            val = parse_clean_float(row.CueResponseValue)
+            if !ismissing(val)
+                idx = findfirst(x -> x == val, row.ParsedRewards)
+                if !isnothing(idx)
+                    
+                    c = idx
+                end
+            else
+                error("CueResponseValue is missing")
+            end
+        end
+
+        # Strategy B: Check PointTargetResponse if CueResponseValue failed
+        # This handles cases where CueResponseValue might be missing or ambiguous
+        if c == 0 && "PointTargetResponse" in names(full_df)
             val = parse_clean_float(row.PointTargetResponse)
             if !ismissing(val)
                 c_candidate = Int(val)
                 # Validate: PointTargetResponse must be within bounds
                 if c_candidate > 0 && c_candidate <= n_options
                     c = c_candidate
-                end
-            end
-        end
-
-        # Strategy B: Infer from CueResponseValue if PointTargetResponse is invalid
-        # This handles cases where PointTargetResponse uses fixed positions (1-4)
-        # but there are fewer than 4 options
-        if c == 0 && "CueResponseValue" in names(full_df)
-            val = parse_clean_float(row.CueResponseValue)
-            if !ismissing(val)
-                idx = findfirst(x -> x == val, row.ParsedRewards)
-                if !isnothing(idx)
-                    c = idx
                 end
             end
         end
