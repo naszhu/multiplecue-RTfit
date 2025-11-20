@@ -98,6 +98,7 @@ end
     Parameters:
     - C: Capacity parameter (drift rate scaling)
     - w_slope: Reward weight slope (exponential gain parameter θ)
+    - C_scale: Drift rate scaling for Component 2 (0-1, where 1=same as Component 1)
     - A1: Maximum start point variability for LBA component 1 (fast mode)
     - k1: Threshold gap for LBA component 1 (b - A)
     - t0_1: Non-decision time for LBA component 1
@@ -110,10 +111,10 @@ end
 """
 function mis_lba_dual_mixture_loglike(params, df::DataFrame)
     # Unpack parameters
-    C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
+    C, w_slope, C_scale, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
     # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A1<=0 || k1<=0 || t0_1<=0 || t0_1 < 0.01 ||
+    if C<=0 || w_slope<0 || C_scale<=0 || C_scale>1.0 || A1<=0 || k1<=0 || t0_1<=0 || t0_1 < 0.01 ||
        A2<=0 || k2<=0 || t0_2<=0 || t0_2 < 0.01 || p_mix<0 || p_mix>0.99
         return Inf
     end
@@ -135,10 +136,14 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         # where θ is the exponential gain parameter (w_slope)
         weights = exp.(w_slope .* rewards ./ r_max)
         rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
 
-        # --- LBA COMPONENT 1 (Fast Mode) ---
-        lba1 = LBA(ν=drift_rates, A=A1, k=k1, τ=t0_1)
+        # Component 1: Full capacity (focused/fast)
+        drift_rates1 = C .* rel_weights
+        # Component 2: Scaled capacity (lapse/slow)
+        drift_rates2 = (C * C_scale) .* rel_weights
+
+        # --- LBA COMPONENT 1 (Fast/Focused Mode) ---
+        lba1 = LBA(ν=drift_rates1, A=A1, k=k1, τ=t0_1)
         lik1 = 0.0
         if rt > t0_1
             try
@@ -151,8 +156,8 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
             lik1 = 1e-10
         end
 
-        # --- LBA COMPONENT 2 (Slow Mode) ---
-        lba2 = LBA(ν=drift_rates, A=A2, k=k2, τ=t0_2)
+        # --- LBA COMPONENT 2 (Slow/Lapse Mode) ---
+        lba2 = LBA(ν=drift_rates2, A=A2, k=k2, τ=t0_2)
         lik2 = 0.0
         if rt > t0_2
             try
