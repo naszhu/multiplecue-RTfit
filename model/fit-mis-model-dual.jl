@@ -83,6 +83,8 @@ function run_analysis()
 
     # Store all results
     all_results = DataFrame[]
+    # Store fitted parameters and data for overall accuracy plot
+    condition_fits = Dict()
     
     # Step 3: Fit model for each cue condition
     for (idx, cue_cond) in enumerate(cue_conditions)
@@ -110,12 +112,25 @@ function run_analysis()
                                        cue_condition=cue_cond)
         push!(all_results, results_df)
         
-        # Generate plot for this condition
+        # Store for overall accuracy plot
         best_params = Optim.minimizer(result)
+        condition_fits[cue_cond] = (data=condition_data, params=best_params)
+        
+        # Generate plots for this condition
         plot_path = joinpath(images_dir, "model_fit_plot_dual_condition_$(cue_cond).png")
         generate_plot_dual(condition_data, best_params, 
                           plot_path;
                           cue_condition=cue_cond)
+    end
+    
+    # Step 3.5: Generate overall accuracy plot showing all conditions
+    if !isempty(condition_fits)
+        println("\n" * "=" ^ 70)
+        println("GENERATING OVERALL ACCURACY PLOT")
+        println("=" ^ 70)
+        
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_all_conditions.png")
+        generate_overall_accuracy_plot(condition_fits, overall_accuracy_plot)
     end
 
     # Step 4: Combine and save all results

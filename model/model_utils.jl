@@ -116,6 +116,18 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
 
     total_neg_ll = 0.0
 
+    # Compute r_max: maximum reward value across all trials in dataset
+    r_max = 0.0
+    for rewards in df.ParsedRewards
+        if !isempty(rewards)
+            r_max = max(r_max, maximum(rewards))
+        end
+    end
+    # Avoid division by zero if all rewards are 0
+    if r_max <= 0.0
+        r_max = 1.0
+    end
+
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
@@ -123,9 +135,9 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = 1 + w * Reward
-        # We add 1.0 to base weight to ensure drift > 0 even for 0 reward
-        weights = 1.0 .+ (w_slope .* rewards)
+        # Weight = exp(θ * r / r_max) as per paper
+        # Exponential weighting allows winner-take-all behavior
+        weights = exp.(w_slope .* rewards ./ r_max)
         rel_weights = weights ./ sum(weights)
         drift_rates = C .* rel_weights
 

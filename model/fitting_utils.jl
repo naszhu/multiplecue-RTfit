@@ -14,7 +14,7 @@ using Random
 using Plots
 using CSV
 
-export fit_model, save_results, generate_plot, save_results_dual, generate_plot_dual
+export fit_model, save_results, generate_plot, save_results_dual, generate_plot_dual, generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot
 
 """
     fit_model(data::DataFrame, objective_func;
@@ -365,6 +365,25 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     y_pred_total = zeros(length(t_grid))
     y_pred_lba1 = zeros(length(t_grid))
     y_pred_lba2 = zeros(length(t_grid))
+    # Choice-specific densities: target (highest reward) vs distractors
+    y_pred_target_total = zeros(length(t_grid))
+    y_pred_target_lba1 = zeros(length(t_grid))
+    y_pred_target_lba2 = zeros(length(t_grid))
+    y_pred_distractor_total = zeros(length(t_grid))
+    y_pred_distractor_lba1 = zeros(length(t_grid))
+    y_pred_distractor_lba2 = zeros(length(t_grid))
+
+    # Compute r_max: maximum reward value across all trials
+    r_max = 0.0
+    for rewards in data.ParsedRewards
+        if !isempty(rewards)
+            r_max = max(r_max, maximum(rewards))
+        end
+    end
+    # Avoid division by zero if all rewards are 0
+    if r_max <= 0.0
+        r_max = 1.0
+    end
 
     # Get unique reward structures
     reward_counts = Dict()
@@ -383,41 +402,72 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
         weight = reward_counts[key]
         total_weight += weight
 
-        # Reconstruct drift rates
-        ws = 1.0 .+ (w_slope .* rewards)
+        # Reconstruct drift rates using exponential weight function
+        # Weight = exp(θ * r / r_max) as per paper
+        ws = exp.(w_slope .* rewards ./ r_max)
         vs = C .* (ws ./ sum(ws))
 
         # LBA components
         lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)
         lba2 = LBA(ν=vs, A=A2, k=k2, τ=t0_2)
 
+        # Identify target choice (highest reward option)
+        target_choice = argmax(rewards)
+        distractor_choices = [c for c in 1:length(vs) if c != target_choice]
+
         for (j, t) in enumerate(t_grid)
-            # LBA component 1
+            # LBA component 1 - total
             lba1_dens = 0.0
+            lba1_target_dens = 0.0
+            lba1_distractor_dens = 0.0
             if t > t0_1
                 try
                     lba1_dens = sum([pdf(lba1, (choice=c, rt=t)) for c in 1:length(vs)])
+                    lba1_target_dens = pdf(lba1, (choice=target_choice, rt=t))
+                    lba1_distractor_dens = sum([pdf(lba1, (choice=c, rt=t)) for c in distractor_choices])
                     if isnan(lba1_dens) || isinf(lba1_dens) lba1_dens = 0.0 end
+                    if isnan(lba1_target_dens) || isinf(lba1_target_dens) lba1_target_dens = 0.0 end
+                    if isnan(lba1_distractor_dens) || isinf(lba1_distractor_dens) lba1_distractor_dens = 0.0 end
                 catch
                     lba1_dens = 0.0
+                    lba1_target_dens = 0.0
+                    lba1_distractor_dens = 0.0
                 end
             end
 
-            # LBA component 2
+            # LBA component 2 - total
             lba2_dens = 0.0
+            lba2_target_dens = 0.0
+            lba2_distractor_dens = 0.0
             if t > t0_2
                 try
                     lba2_dens = sum([pdf(lba2, (choice=c, rt=t)) for c in 1:length(vs)])
+                    lba2_target_dens = pdf(lba2, (choice=target_choice, rt=t))
+                    lba2_distractor_dens = sum([pdf(lba2, (choice=c, rt=t)) for c in distractor_choices])
                     if isnan(lba2_dens) || isinf(lba2_dens) lba2_dens = 0.0 end
+                    if isnan(lba2_target_dens) || isinf(lba2_target_dens) lba2_target_dens = 0.0 end
+                    if isnan(lba2_distractor_dens) || isinf(lba2_distractor_dens) lba2_distractor_dens = 0.0 end
                 catch
                     lba2_dens = 0.0
+                    lba2_target_dens = 0.0
+                    lba2_distractor_dens = 0.0
                 end
             end
 
-            # Weighted mixture
+            # Weighted mixture - total
             y_pred_lba1[j] += weight * p_mix * lba1_dens
             y_pred_lba2[j] += weight * (1-p_mix) * lba2_dens
             y_pred_total[j] += weight * ((p_mix * lba1_dens) + ((1-p_mix) * lba2_dens))
+            
+            # Weighted mixture - target choice
+            y_pred_target_lba1[j] += weight * p_mix * lba1_target_dens
+            y_pred_target_lba2[j] += weight * (1-p_mix) * lba2_target_dens
+            y_pred_target_total[j] += weight * ((p_mix * lba1_target_dens) + ((1-p_mix) * lba2_target_dens))
+            
+            # Weighted mixture - distractor choices
+            y_pred_distractor_lba1[j] += weight * p_mix * lba1_distractor_dens
+            y_pred_distractor_lba2[j] += weight * (1-p_mix) * lba2_distractor_dens
+            y_pred_distractor_total[j] += weight * ((p_mix * lba1_distractor_dens) + ((1-p_mix) * lba2_distractor_dens))
         end
     end
 
@@ -426,6 +476,12 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
         y_pred_total ./= total_weight
         y_pred_lba1 ./= total_weight
         y_pred_lba2 ./= total_weight
+        y_pred_target_total ./= total_weight
+        y_pred_target_lba1 ./= total_weight
+        y_pred_target_lba2 ./= total_weight
+        y_pred_distractor_total ./= total_weight
+        y_pred_distractor_lba1 ./= total_weight
+        y_pred_distractor_lba2 ./= total_weight
     end
 
     # Find peaks
@@ -440,12 +496,18 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     max_lba2_rt = t_grid[max_lba2_idx]
     max_lba2_dens = y_pred_lba2[max_lba2_idx]
 
-    # Plot components
+    # Plot components - total
     plot!(p, t_grid, y_pred_lba1, label="LBA Component 1 (Fast, p=$(round(p_mix, digits=3)))", 
           linewidth=2, color=:orange, linestyle=:dash, alpha=0.7)
     plot!(p, t_grid, y_pred_lba2, label="LBA Component 2 (Slow, p=$(round(1-p_mix, digits=3)))", 
           linewidth=2, color=:green, linestyle=:dash, alpha=0.7)
     plot!(p, t_grid, y_pred_total, label="Total Mixture", linewidth=3, color=:red)
+    
+    # Plot choice-specific densities
+    plot!(p, t_grid, y_pred_target_total, label="Target Choice (Highest Reward)", 
+          linewidth=2.5, color=:purple, linestyle=:solid, alpha=0.8)
+    plot!(p, t_grid, y_pred_distractor_total, label="Distractor Choices", 
+          linewidth=2.5, color=:brown, linestyle=:solid, alpha=0.8)
 
     # Add vertical lines at peaks
     vline!(p, [max_lba1_rt], color=:orange, linestyle=:dot, linewidth=1, alpha=0.5, label="")
@@ -459,6 +521,436 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
     println("  LBA2 (slow) - t0: $(round(t0_2, digits=3))s, peak at: $(round(max_lba2_rt, digits=3))s")
     println("  Component separation: $(round(abs(max_lba1_rt - max_lba2_rt)*1000, digits=0))ms")
+end
+
+"""
+    generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing)
+
+    Generates a plot showing observed vs predicted choice probability for the target option
+    (highest reward option). Groups by CueCondition to match experimental design.
+
+    Arguments:
+    - data: DataFrame with CleanRT, Choice, ParsedRewards, and CueCondition columns
+    - params: Vector of model parameters [C, w, A1, k1, t0_1, A2, k2, t0_2, p_mix]
+    - output_plot: Output filename for plot
+    - cue_condition: Optional cue condition identifier for plot title (if provided, shows only that condition)
+"""
+function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accuracy_plot.png"; cue_condition=nothing)
+    println("Generating accuracy plot for dual-LBA model...")
+
+    # Unpack parameters
+    C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
+
+    # Compute r_max: maximum reward value across all trials
+    r_max = 0.0
+    for rewards in data.ParsedRewards
+        if !isempty(rewards)
+            r_max = max(r_max, maximum(rewards))
+        end
+    end
+    if r_max <= 0.0
+        r_max = 1.0
+    end
+
+    # Check if CueCondition column exists
+    has_cue_condition = "CueCondition" in names(data)
+    
+    if has_cue_condition && isnothing(cue_condition)
+        # Group by CueCondition for overall plot
+        cue_conditions = unique(data.CueCondition)
+        filter!(x -> !ismissing(x), cue_conditions)
+        sort!(cue_conditions)
+        
+        observed_acc = Float64[]
+        predicted_acc = Float64[]
+        condition_labels = String[]
+        n_trials_per_cond = Int[]
+        
+        # RT grid for numerical integration
+        t_grid = range(0.05, 3.0, length=1000)
+        dt = t_grid[2] - t_grid[1]
+        
+        for cc in cue_conditions
+            condition_data = filter(row -> row.CueCondition == cc, data)
+            if nrow(condition_data) < 5
+                continue  # Skip conditions with too few trials
+            end
+            
+            # Group by unique reward structures within this condition
+            reward_groups = Dict()
+            for (i, row) in enumerate(eachrow(condition_data))
+                rewards = row.ParsedRewards
+                key = string(rewards)
+                if !haskey(reward_groups, key)
+                    reward_groups[key] = Dict(
+                        "rewards" => rewards,
+                        "target_choice" => argmax(rewards),
+                        "choices" => Int[],
+                        "n_trials" => 0
+                    )
+                end
+                push!(reward_groups[key]["choices"], row.Choice)
+                reward_groups[key]["n_trials"] += 1
+            end
+            
+            # Compute weighted average accuracy across all reward structures in this condition
+            total_obs_correct = 0
+            total_trials = 0
+            total_pred_prob = 0.0
+            total_weight = 0.0
+            
+            for (key, group) in reward_groups
+                rewards = group["rewards"]
+                target_choice = group["target_choice"]
+                choices = group["choices"]
+                n_trials = group["n_trials"]
+                
+                # Observed accuracy for this reward structure
+                n_correct = sum(choices .== target_choice)
+                total_obs_correct += n_correct
+                total_trials += n_trials
+                
+                # Predicted accuracy for this reward structure
+                ws = exp.(w_slope .* rewards ./ r_max)
+                vs = C .* (ws ./ sum(ws))
+
+                lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)
+                lba2 = LBA(ν=vs, A=A2, k=k2, τ=t0_2)
+
+                # Compute choice probability for each LBA component separately, then mix
+                # This is more numerically stable than mixing PDFs first
+                pred_prob1 = 0.0
+                pred_prob2 = 0.0
+                
+                for t in t_grid
+                    if t > t0_1
+                        try
+                            prob1 = pdf(lba1, (choice=target_choice, rt=t))
+                            if !isnan(prob1) && !isinf(prob1) && prob1 > 0
+                                pred_prob1 += prob1 * dt
+                            end
+                        catch
+                        end
+                    end
+                    if t > t0_2
+                        try
+                            prob2 = pdf(lba2, (choice=target_choice, rt=t))
+                            if !isnan(prob2) && !isinf(prob2) && prob2 > 0
+                                pred_prob2 += prob2 * dt
+                            end
+                        catch
+                        end
+                    end
+                end
+                
+                # Mix the choice probabilities (not the PDFs)
+                pred_prob = p_mix * pred_prob1 + (1 - p_mix) * pred_prob2
+                
+                # Weight by number of trials
+                total_pred_prob += pred_prob * n_trials
+                total_weight += n_trials
+            end
+            
+            if total_trials > 0
+                obs_acc = total_obs_correct / total_trials
+                pred_acc = total_weight > 0 ? total_pred_prob / total_weight : 0.0
+                
+                push!(observed_acc, obs_acc)
+                push!(predicted_acc, pred_acc)
+                push!(condition_labels, string(cc))
+                push!(n_trials_per_cond, total_trials)
+            end
+        end
+        
+        # Create plot
+        title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)"
+        p = plot(size=(1200, 700), title=title_str, 
+                 xlabel="Cue Condition", ylabel="Choice Probability (Target Option)", 
+                 ylim=(0, 1.05), legend=:topright)
+        
+        x_pos = 1:length(condition_labels)
+        scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=8, alpha=0.8)
+        scatter!(p, x_pos, predicted_acc, label="Predicted", color=:red, markersize=8, alpha=0.8, marker=:x)
+        
+        # Add lines
+        plot!(p, x_pos, observed_acc, linestyle=:dash, color=:blue, alpha=0.3, label="")
+        plot!(p, x_pos, predicted_acc, linestyle=:dash, color=:red, alpha=0.3, label="")
+        
+        # Add perfect accuracy line
+        plot!(p, [0, length(condition_labels)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
+        
+        # Set x-axis labels
+        plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
+        
+        # Add trial count annotations
+        for (i, n) in enumerate(n_trials_per_cond)
+            annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        end
+        
+    else
+        # Fallback: group by reward structure (original method) if no CueCondition or specific condition requested
+        reward_groups = Dict()
+        for (i, row) in enumerate(eachrow(data))
+            rewards = row.ParsedRewards
+            key = string(rewards)
+            if !haskey(reward_groups, key)
+                reward_groups[key] = Dict(
+                    "rewards" => rewards,
+                    "target_choice" => argmax(rewards),
+                    "trials" => Int[],
+                    "choices" => Int[]
+                )
+            end
+            push!(reward_groups[key]["trials"], i)
+            push!(reward_groups[key]["choices"], row.Choice)
+        end
+
+        reward_keys = sort(collect(keys(reward_groups)))
+        observed_acc = Float64[]
+        predicted_acc = Float64[]
+        reward_labels = String[]
+
+        t_grid = range(0.05, 3.0, length=1000)
+        dt = t_grid[2] - t_grid[1]
+
+        for key in reward_keys
+            group = reward_groups[key]
+            rewards = group["rewards"]
+            target_choice = group["target_choice"]
+            choices = group["choices"]
+
+            n_trials = length(choices)
+            n_correct = sum(choices .== target_choice)
+            obs_acc = n_trials > 0 ? n_correct / n_trials : 0.0
+            push!(observed_acc, obs_acc)
+
+            ws = exp.(w_slope .* rewards ./ r_max)
+            vs = C .* (ws ./ sum(ws))
+
+            lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)
+            lba2 = LBA(ν=vs, A=A2, k=k2, τ=t0_2)
+
+            pred_prob = 0.0
+            for t in t_grid
+                if t > max(t0_1, t0_2)
+                    try
+                        prob1 = pdf(lba1, (choice=target_choice, rt=t))
+                        prob2 = pdf(lba2, (choice=target_choice, rt=t))
+                        if !isnan(prob1) && !isinf(prob1) && !isnan(prob2) && !isinf(prob2)
+                            pred_prob += (p_mix * prob1 + (1 - p_mix) * prob2) * dt
+                        end
+                    catch
+                    end
+                end
+            end
+            push!(predicted_acc, pred_prob)
+            push!(reward_labels, key)
+        end
+
+        title_str = "Choice Accuracy: Target (Highest Reward) Option"
+        if !isnothing(cue_condition)
+            title_str = "Choice Accuracy - Cue Condition: $cue_condition"
+        end
+
+        p = plot(size=(1000, 600), title=title_str, xlabel="Reward Structure", 
+                 ylabel="Choice Probability (Target)", ylim=(0, 1.05), legend=:topright)
+
+        x_pos = 1:length(reward_keys)
+        scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=6, alpha=0.7)
+        scatter!(p, x_pos, predicted_acc, label="Predicted", color=:red, markersize=6, alpha=0.7, marker=:x)
+
+        plot!(p, x_pos, observed_acc, linestyle=:dash, color=:blue, alpha=0.3, label="")
+        plot!(p, x_pos, predicted_acc, linestyle=:dash, color=:red, alpha=0.3, label="")
+        plot!(p, [0, length(reward_keys)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
+
+        if length(reward_keys) > 10
+            plot!(p, xticks=(x_pos, ["" for _ in x_pos]), xlabel="Reward Structure (index)")
+        else
+            plot!(p, xticks=(x_pos, [string(i) for i in 1:length(reward_keys)]))
+        end
+    end
+
+    savefig(p, output_plot)
+    println("Saved accuracy plot to $output_plot")
+    
+    if length(observed_acc) > 0
+        mean_obs = mean(observed_acc)
+        mean_pred = mean(predicted_acc)
+        rmse = sqrt(mean((observed_acc .- predicted_acc).^2))
+        println("  Mean observed accuracy: $(round(mean_obs, digits=3))")
+        println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
+        println("  RMSE: $(round(rmse, digits=3))")
+    end
+end
+
+"""
+    generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png")
+
+    Generates one overall accuracy plot showing all CueConditions together.
+    Uses condition-specific fitted parameters for each condition.
+
+    Arguments:
+    - condition_fits: Dictionary mapping CueCondition => (data=DataFrame, params=Vector)
+    - output_plot: Output filename for plot
+"""
+function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accuracy_plot_all_conditions.png")
+    println("Generating overall accuracy plot for all conditions...")
+    
+    observed_acc = Float64[]
+    predicted_acc = Float64[]
+    condition_labels = String[]
+    n_trials_per_cond = Int[]
+    
+    # RT grid for numerical integration
+    t_grid = range(0.05, 3.0, length=1000)
+    dt = t_grid[2] - t_grid[1]
+    
+    # Sort conditions for consistent ordering
+    sorted_conditions = sort(collect(keys(condition_fits)))
+    
+    for cc in sorted_conditions
+        condition_data = condition_fits[cc].data
+        params = condition_fits[cc].params
+        
+        # Unpack parameters for this condition
+        C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
+        
+        # Compute r_max for this condition
+        r_max = 0.0
+        for rewards in condition_data.ParsedRewards
+            if !isempty(rewards)
+                r_max = max(r_max, maximum(rewards))
+            end
+        end
+        if r_max <= 0.0
+            r_max = 1.0
+        end
+        
+        # Group by unique reward structures within this condition
+        reward_groups = Dict()
+        for (i, row) in enumerate(eachrow(condition_data))
+            rewards = row.ParsedRewards
+            key = string(rewards)
+            if !haskey(reward_groups, key)
+                reward_groups[key] = Dict(
+                    "rewards" => rewards,
+                    "target_choice" => argmax(rewards),
+                    "choices" => Int[],
+                    "n_trials" => 0
+                )
+            end
+            push!(reward_groups[key]["choices"], row.Choice)
+            reward_groups[key]["n_trials"] += 1
+        end
+        
+        # Compute weighted average accuracy across all reward structures in this condition
+        total_obs_correct = 0
+        total_trials = 0
+        total_pred_prob = 0.0
+        total_weight = 0.0
+        
+        for (key, group) in reward_groups
+            rewards = group["rewards"]
+            target_choice = group["target_choice"]
+            choices = group["choices"]
+            n_trials = group["n_trials"]
+            
+            # Observed accuracy for this reward structure
+            n_correct = sum(choices .== target_choice)
+            total_obs_correct += n_correct
+            total_trials += n_trials
+            
+            # Predicted accuracy for this reward structure using THIS condition's parameters
+            ws = exp.(w_slope .* rewards ./ r_max)
+            vs = C .* (ws ./ sum(ws))
+            
+            lba1 = LBA(ν=vs, A=A1, k=k1, τ=t0_1)
+            lba2 = LBA(ν=vs, A=A2, k=k2, τ=t0_2)
+            
+            # Compute choice probability for each LBA component separately, then mix
+            # This is more numerically stable than mixing PDFs first
+            pred_prob1 = 0.0
+            pred_prob2 = 0.0
+            
+            for t in t_grid
+                if t > t0_1
+                    try
+                        prob1 = pdf(lba1, (choice=target_choice, rt=t))
+                        if !isnan(prob1) && !isinf(prob1) && prob1 > 0
+                            pred_prob1 += prob1 * dt
+                        end
+                    catch
+                    end
+                end
+                if t > t0_2
+                    try
+                        prob2 = pdf(lba2, (choice=target_choice, rt=t))
+                        if !isnan(prob2) && !isinf(prob2) && prob2 > 0
+                            pred_prob2 += prob2 * dt
+                        end
+                    catch
+                    end
+                end
+            end
+            
+            # Mix the choice probabilities (not the PDFs)
+            pred_prob = p_mix * pred_prob1 + (1 - p_mix) * pred_prob2
+            
+            # Weight by number of trials
+            total_pred_prob += pred_prob * n_trials
+            total_weight += n_trials
+        end
+        
+        if total_trials > 0
+            obs_acc = total_obs_correct / total_trials
+            pred_acc = total_weight > 0 ? total_pred_prob / total_weight : 0.0
+            
+            push!(observed_acc, obs_acc)
+            push!(predicted_acc, pred_acc)
+            push!(condition_labels, string(cc))
+            push!(n_trials_per_cond, total_trials)
+        end
+    end
+    
+    # Create plot
+    title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nUsing Condition-Specific Fitted Parameters"
+    p = plot(size=(1200, 700), title=title_str, 
+             xlabel="Cue Condition", ylabel="Choice Probability (Target Option)", 
+             ylim=(0, 1.05), legend=:topright)
+    
+    x_pos = 1:length(condition_labels)
+    scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
+    scatter!(p, x_pos, predicted_acc, label="Predicted", color=:red, markersize=10, alpha=0.8, marker=:x)
+    
+    # Add lines connecting points
+    plot!(p, x_pos, observed_acc, linestyle=:dash, color=:blue, alpha=0.3, label="")
+    plot!(p, x_pos, predicted_acc, linestyle=:dash, color=:red, alpha=0.3, label="")
+    
+    # Add perfect accuracy line
+    plot!(p, [0, length(condition_labels)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
+    
+    # Add diagonal line (perfect prediction)
+    plot!(p, [0, length(condition_labels)+1], [0, 1], linestyle=:dot, color=:black, alpha=0.3, label="Perfect Prediction", linewidth=1)
+    
+    # Set x-axis labels
+    plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
+    
+    # Add trial count annotations
+    for (i, n) in enumerate(n_trials_per_cond)
+        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+    end
+    
+    savefig(p, output_plot)
+    println("Saved overall accuracy plot to $output_plot")
+    
+    if length(observed_acc) > 0
+        mean_obs = mean(observed_acc)
+        mean_pred = mean(predicted_acc)
+        rmse = sqrt(mean((observed_acc .- predicted_acc).^2))
+        println("  Mean observed accuracy: $(round(mean_obs, digits=3))")
+        println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
+        println("  RMSE: $(round(rmse, digits=3))")
+    end
 end
 
 end # module
