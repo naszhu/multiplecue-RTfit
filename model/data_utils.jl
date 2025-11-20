@@ -99,6 +99,24 @@ function load_and_process_data(path, file_pattern="*.dat")
     for (i, file) in enumerate(non_practice_files)
         dt = read_psychopy_dat(file)
         if !isempty(dt)
+            # Filter out warm-up trials if WarmUpTrial column exists
+            if "WarmUpTrial" in names(dt)
+                before_warmup_filter = nrow(dt)
+                filter!(row -> begin
+                    val = row.WarmUpTrial
+                    # Keep row if WarmUpTrial is missing, 0, false, or "0"
+                    # Filter out if WarmUpTrial is 1, true, or "1"
+                    if ismissing(val)
+                        true  # Keep rows with missing WarmUpTrial
+                    else
+                        !(val == 1 || val == true || (isa(val, AbstractString) && strip(string(val)) == "1"))
+                    end
+                end, dt)
+                if nrow(dt) < before_warmup_filter
+                    println("  Filtered out $(before_warmup_filter - nrow(dt)) warm-up trials from $(basename(file))")
+                end
+            end
+            
             # Keep relevant columns if they exist
             cols_needed = ["RT", "CueValues", "RespLoc", "PointTargetResponse", "CueResponseValue", "CueCondition"]
             cols_present = intersect(names(dt), cols_needed)
