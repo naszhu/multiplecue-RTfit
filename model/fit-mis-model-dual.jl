@@ -31,8 +31,10 @@ using .Config
 # CONFIGURATION
 # ==========================================================================
 
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
+# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
+const PARTICIPANT_ID = 3  # Options: 1, 2, or 3
+# ========================================================
+
 const OUTPUT_CSV = "model_fit_results_dual.csv"
 const OUTPUT_PLOT = "model_fit_plot_dual.png"
 
@@ -41,6 +43,14 @@ const OUTPUT_PLOT = "model_fit_plot_dual.png"
 # ==========================================================================
 
 function run_analysis()
+    # Get data configuration for selected participant
+    data_config = get_data_config(PARTICIPANT_ID)
+    println("=" ^ 70)
+    println("PARTICIPANT SELECTION")
+    println("=" ^ 70)
+    println("Selected Participant ID: $(data_config.participant_id)")
+    println("Data path: $(data_config.data_base_path)")
+
     # Create configuration with plot display flags
     # Set to false to disable target/distractor choice lines in plots
     plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
@@ -53,10 +63,10 @@ function run_analysis()
     end
 
     # Step 1: Load and process data
-    println("=" ^ 70)
+    println("\n" * "=" ^ 70)
     println("LOADING DATA")
     println("=" ^ 70)
-    data = load_and_process_data(DATA_PATH, FILE_PATTERN)
+    data = load_and_process_data(data_config.data_base_path, data_config.file_pattern)
 
     # Check if CueCondition column exists
     if !("CueCondition" in names(data))
@@ -131,17 +141,17 @@ function run_analysis()
                            lower=lower, upper=upper, x0=x0, time_limit=600.0, r_max=r_max)
 
         # Save results for this condition
-        results_df = save_results_dual(result, 
-                                       "model_fit_results_dual_condition_$(cue_cond).csv";
+        results_df = save_results_dual(result,
+                                       "model_fit_results_dual_P$(data_config.participant_id)_condition_$(cue_cond).csv";
                                        cue_condition=cue_cond)
         push!(all_results, results_df)
-        
+
         # Store for overall accuracy plot
         best_params = Optim.minimizer(result)
         condition_fits[cue_cond] = (data=condition_data, params=best_params)
-        
+
         # Generate plots for this condition
-        plot_path = joinpath(images_dir, "model_fit_plot_dual_condition_$(cue_cond).png")
+        plot_path = joinpath(images_dir, "model_fit_plot_dual_P$(data_config.participant_id)_condition_$(cue_cond).png")
         p = generate_plot_dual(condition_data, best_params,
                               plot_path;
                               cue_condition=cue_cond, r_max=r_max, config=plot_config)
@@ -153,28 +163,28 @@ function run_analysis()
         println("\n" * "=" ^ 70)
         println("GENERATING OVERALL ACCURACY PLOT")
         println("=" ^ 70)
-        
-        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_all_conditions.png")
+
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_P$(data_config.participant_id)_all_conditions.png")
         generate_overall_accuracy_plot(condition_fits, overall_accuracy_plot; r_max=r_max)
     end
-    
+
     # Step 4.6: Generate combined RT fit plot for all conditions
     if !isempty(individual_plots)
         println("\n" * "=" ^ 70)
         println("GENERATING COMBINED RT FIT PLOT FOR ALL CONDITIONS")
         println("=" ^ 70)
-        
+
         # Calculate grid dimensions (aim for roughly square layout)
         n_plots = length(individual_plots)
         n_cols = ceil(Int, sqrt(n_plots))
         n_rows = ceil(Int, n_plots / n_cols)
-        
+
         # Create combined plot with larger fonts
         # Font sizes are set globally and should apply to all subplots
-        combined_plot = plot(individual_plots..., 
+        combined_plot = plot(individual_plots...,
                             layout=(n_rows, n_cols),
                             size=(n_cols * 600, n_rows * 500),
-                            plot_title="Dual-LBA Mixture Fit - All Conditions",
+                            plot_title="Dual-LBA Mixture Fit - Participant $(data_config.participant_id) - All Conditions",
                             plot_titlefontsize=18,
                             # Set font sizes for all subplots
                             titlefontsize=14,
@@ -182,9 +192,9 @@ function run_analysis()
                             guidefontsize=14,
                             tickfontsize=12,
                             fontsize=12)  # Base font size
-        
+
         # Save combined plot
-        combined_plot_path = joinpath(images_dir, "model_fit_plot_dual_all_conditions.png")
+        combined_plot_path = joinpath(images_dir, "model_fit_plot_dual_P$(data_config.participant_id)_all_conditions.png")
         savefig(combined_plot, combined_plot_path)
         println("Saved combined RT fit plot to $combined_plot_path")
     end
@@ -204,8 +214,9 @@ function run_analysis()
             println("Created outputdata directory: $outputdata_dir")
         end
 
-        # Save to outputdata subfolder
-        output_path = joinpath(outputdata_dir, OUTPUT_CSV)
+        # Save to outputdata subfolder with participant ID
+        output_filename = "model_fit_results_dual_P$(data_config.participant_id).csv"
+        output_path = joinpath(outputdata_dir, output_filename)
         CSV.write(output_path, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
@@ -217,7 +228,8 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
-    println("Combined results saved to outputdata/$OUTPUT_CSV")
+    println("Participant: $(data_config.participant_id)")
+    println("Combined results saved to outputdata/model_fit_results_dual_P$(data_config.participant_id).csv")
     println("Individual condition results and plots saved with condition-specific filenames")
     println("\nNote: This model uses TWO LBA components to capture bimodality,")
     println("      rather than LBA + express responses.")

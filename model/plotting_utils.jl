@@ -1162,7 +1162,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nSingle LBA Model - Condition-Specific Fitted Parameters"
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:topright)
+             ylim=(0, 1.05), legend=:bottomright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
