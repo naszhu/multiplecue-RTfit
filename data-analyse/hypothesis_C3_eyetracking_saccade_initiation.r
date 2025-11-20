@@ -542,6 +542,41 @@ if (nrow(valid_redefined) > 0 && "CueCondition" %in% names(valid_redefined)) {
       dpi = 300,
       bg = "white"
     )
+    
+    # Plot 4: RT distribution by cue condition - Density only (clean version)
+    # This explicitly shows RT from cue onset to eye leaving fixation circle
+    p4 <- ggplot(valid_redefined_df, aes(x = RT_saccade_initiation)) +
+      geom_density(linewidth = 1.2, fill = "steelblue", alpha = 0.5) +
+      facet_wrap(~ CueCondition_fac, scales = "free_y") +
+      scale_x_continuous(limits = c(0, xlim_max), expand = c(0, 0)) +
+      labs(
+        title = "Hypothesis C3: Saccade Initiation RT by Cue Condition",
+        subtitle = paste("RT = Time from cue onset to eye leaving fixation circle (radius =", 
+                        sprintf("%.4f", fixation_radius), "units)"),
+        x = "Reaction Time (seconds) - Cue Onset to Saccade Initiation",
+        y = "Density"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 11),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.background = element_rect(fill = "white", color = NA),
+        strip.text = element_text(size = 11, face = "bold")
+      ) +
+      geom_vline(xintercept = c(0.05, 0.1), 
+                 linetype = "dashed", alpha = 0.5, color = "gray")
+    
+    ggsave(
+      filename = file.path(output_dir, "hypothesis_C3_saccade_initiation_RT_by_condition.png"),
+      plot = p4,
+      width = 16,
+      height = 12,
+      dpi = 300,
+      bg = "white"
+    )
+    
+    cat("Saved: hypothesis_C3_saccade_initiation_RT_by_condition.png\n")
   }
 }
 
