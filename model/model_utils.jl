@@ -135,6 +135,12 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
         r_max = 1.0
     end
 
+    # Precompute constant factor to avoid repeated divisions
+    w_slope_normalized = w_slope / r_max
+
+    # Cache for drift rates based on reward configurations
+    drift_cache = Dict{Vector{Float64}, Any}()
+
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
@@ -142,11 +148,18 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = exp(θ * r / r_max) as per paper
-        # Exponential weighting allows winner-take-all behavior
-        weights = exp.(w_slope .* rewards ./ r_max)
-        rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
+        # Check if we've already computed drift rates for this reward configuration
+        if haskey(drift_cache, rewards)
+            drift_rates = drift_cache[rewards]
+        else
+            # Weight = exp(θ * r / r_max) as per paper
+            # Exponential weighting allows winner-take-all behavior
+            weights = exp.(w_slope_normalized .* rewards)
+            rel_weights = weights ./ sum(weights)
+            drift_rates = C .* rel_weights
+            # Cache the result
+            drift_cache[rewards] = drift_rates
+        end
 
         # --- LBA COMPONENT 1 (Fast Mode) ---
         lba1 = LBA(ν=drift_rates, A=A1, k=k1, τ=t0_1)
@@ -231,6 +244,12 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
         r_max = 1.0
     end
 
+    # Precompute constant factor to avoid repeated divisions
+    w_slope_normalized = w_slope / r_max
+
+    # Cache for drift rates based on reward configurations
+    drift_cache = Dict{Vector{Float64}, Any}()
+
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
@@ -238,11 +257,18 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = exp(θ * r / r_max) as per paper
-        # Exponential weighting allows winner-take-all behavior
-        weights = exp.(w_slope .* rewards ./ r_max)
-        rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
+        # Check if we've already computed drift rates for this reward configuration
+        if haskey(drift_cache, rewards)
+            drift_rates = drift_cache[rewards]
+        else
+            # Weight = exp(θ * r / r_max) as per paper
+            # Exponential weighting allows winner-take-all behavior
+            weights = exp.(w_slope_normalized .* rewards)
+            rel_weights = weights ./ sum(weights)
+            drift_rates = C .* rel_weights
+            # Cache the result
+            drift_cache[rewards] = drift_rates
+        end
 
         # --- SINGLE LBA ---
         lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
@@ -313,6 +339,14 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
         r_max = 1.0
     end
 
+    # Precompute constant factor to avoid repeated divisions
+    w_slope_normalized = w_slope / r_max
+
+    # Cache for drift rates based on reward configurations
+    # Key: reward vector, Value: drift rates
+    # Use Any to support both Float64 and ForwardDiff.Dual types during autodiff
+    drift_cache = Dict{Vector{Float64}, Any}()
+
     # Accumulate log-likelihood across ALL trials from ALL conditions
     for i in 1:nrow(df)
         rt = df.CleanRT[i]
@@ -320,11 +354,18 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
         rewards = df.ParsedRewards[i]
 
         # --- MIS THEORY ---
-        # Weight = exp(θ * r / r_max) as per paper
-        # Exponential weighting allows winner-take-all behavior
-        weights = exp.(w_slope .* rewards ./ r_max)
-        rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
+        # Check if we've already computed drift rates for this reward configuration
+        if haskey(drift_cache, rewards)
+            drift_rates = drift_cache[rewards]
+        else
+            # Weight = exp(θ * r / r_max) as per paper
+            # Exponential weighting allows winner-take-all behavior
+            weights = exp.(w_slope_normalized .* rewards)
+            rel_weights = weights ./ sum(weights)
+            drift_rates = C .* rel_weights
+            # Cache the result
+            drift_cache[rewards] = drift_rates
+        end
 
         # --- SINGLE LBA ---
         lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)

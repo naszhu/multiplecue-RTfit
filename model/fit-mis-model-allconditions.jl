@@ -31,7 +31,7 @@ using .Config
 # ==========================================================================
 
 # ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 1  # Options: 1, 2, or 3
+const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
 # ========================================================
 
 const OUTPUT_CSV = "model_fit_results_allconditions.csv"
