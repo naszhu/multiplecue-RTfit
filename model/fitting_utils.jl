@@ -299,13 +299,22 @@ function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condi
                      "NonDec1(t0_1)", "StartVar2(A2)", "ThreshGap2(k2)", "NonDec2(t0_2)", "ProbMix(p_mix)"],
         Value = best
     )
-    
+
     if !isnothing(cue_condition)
         results_df.CueCondition = fill(cue_condition, nrow(results_df))
     end
 
-    CSV.write(output_csv, results_df)
-    println("Saved parameters to $output_csv")
+    # Create outputdata subfolder if it doesn't exist
+    outputdata_dir = joinpath(@__DIR__, "outputdata")
+    if !isdir(outputdata_dir)
+        mkdir(outputdata_dir)
+        println("Created outputdata directory: $outputdata_dir")
+    end
+
+    # Save to outputdata subfolder
+    output_path = joinpath(outputdata_dir, basename(output_csv))
+    CSV.write(output_path, results_df)
+    println("Saved parameters to $output_path")
 
     return results_df
 end

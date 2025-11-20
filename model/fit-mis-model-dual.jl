@@ -20,10 +20,12 @@ using Pkg
 include("data_utils.jl")
 include("model_utils.jl")
 include("fitting_utils.jl")
+include("config.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
+using .Config
 
 # ==========================================================================
 # CONFIGURATION
@@ -39,13 +41,17 @@ const OUTPUT_PLOT = "model_fit_plot_dual.png"
 # ==========================================================================
 
 function run_analysis()
+    # Create configuration with plot display flags
+    # Set to false to disable target/distractor choice lines in plots
+    plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
+
     # Create images subfolder if it doesn't exist
     images_dir = joinpath(@__DIR__, "images")
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
     end
-    
+
     # Step 1: Load and process data
     println("=" ^ 70)
     println("LOADING DATA")
@@ -135,9 +141,9 @@ function run_analysis()
         
         # Generate plots for this condition
         plot_path = joinpath(images_dir, "model_fit_plot_dual_condition_$(cue_cond).png")
-        generate_plot_dual(condition_data, best_params, 
+        generate_plot_dual(condition_data, best_params,
                           plot_path;
-                          cue_condition=cue_cond, r_max=r_max)
+                          cue_condition=cue_cond, r_max=r_max, config=plot_config)
     end
     
     # Step 4.5: Generate overall accuracy plot showing all conditions
@@ -157,10 +163,20 @@ function run_analysis()
 
     if !isempty(all_results)
         combined_results = vcat(all_results...)
-        CSV.write(OUTPUT_CSV, combined_results)
+
+        # Create outputdata subfolder if it doesn't exist
+        outputdata_dir = joinpath(@__DIR__, "outputdata")
+        if !isdir(outputdata_dir)
+            mkdir(outputdata_dir)
+            println("Created outputdata directory: $outputdata_dir")
+        end
+
+        # Save to outputdata subfolder
+        output_path = joinpath(outputdata_dir, OUTPUT_CSV)
+        CSV.write(output_path, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
-        println("\nResults saved to: $OUTPUT_CSV")
+        println("\nResults saved to: $output_path")
     else
         println("WARNING: No results to save!")
     end
@@ -168,7 +184,7 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
-    println("Combined results saved to: $OUTPUT_CSV")
+    println("Combined results saved to outputdata/$OUTPUT_CSV")
     println("Individual condition results and plots saved with condition-specific filenames")
     println("\nNote: This model uses TWO LBA components to capture bimodality,")
     println("      rather than LBA + express responses.")
