@@ -74,12 +74,12 @@ function run_analysis()
     println("=" ^ 70)
 
     # Parameter bounds and initial values for dual-LBA model
-    # [C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix]
+    # [C1, C2, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix]
     # Component 1 (fast): lower thresholds, faster t0
     # Component 2 (slow): higher thresholds, slower t0
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05,  0.01, 0.05, 0.15,  0.0]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.4,   1.0,  1.0,  0.6,   0.99]
-    x0    = [10.0, 1.0,   0.2,  0.2,  0.2,   0.3,  0.3,  0.35,  0.4]
+    lower = [1.0,  1.0,  0.0,   0.01, 0.05, 0.05,  0.01, 0.05, 0.15,  0.0]
+    upper = [30.0, 30.0, 10.0,  1.0,  1.0,  0.4,   1.0,  1.0,  0.6,   0.99]
+    x0    = [10.0, 10.0, 1.0,   0.2,  0.2,  0.2,   0.3,  0.3,  0.35,  0.4]
 
     # Store all results
     all_results = DataFrame[]

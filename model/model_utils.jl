@@ -96,7 +96,8 @@ end
     bimodality, rather than LBA + express responses.
 
     Parameters:
-    - C: Capacity parameter (drift rate scaling)
+    - C1: Capacity parameter for LBA component 1 (drift rate scaling)
+    - C2: Capacity parameter for LBA component 2 (drift rate scaling)
     - w_slope: Reward weight slope (exponential gain parameter θ)
     - A1: Maximum start point variability for LBA component 1 (fast mode)
     - k1: Threshold gap for LBA component 1 (b - A)
@@ -110,10 +111,10 @@ end
 """
 function mis_lba_dual_mixture_loglike(params, df::DataFrame)
     # Unpack parameters
-    C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
+    C1, C2, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
     # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A1<=0 || k1<=0 || t0_1<=0 || t0_1 < 0.01 ||
+    if C1<=0 || C2<=0 || w_slope<0 || A1<=0 || k1<=0 || t0_1<=0 || t0_1 < 0.01 ||
        A2<=0 || k2<=0 || t0_2<=0 || t0_2 < 0.01 || p_mix<0 || p_mix>0.99
         return Inf
     end
@@ -135,10 +136,13 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         # where θ is the exponential gain parameter (w_slope)
         weights = exp.(w_slope .* rewards ./ r_max)
         rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
+
+        # Different drift rates for each component
+        drift_rates1 = C1 .* rel_weights
+        drift_rates2 = C2 .* rel_weights
 
         # --- LBA COMPONENT 1 (Fast Mode) ---
-        lba1 = LBA(ν=drift_rates, A=A1, k=k1, τ=t0_1)
+        lba1 = LBA(ν=drift_rates1, A=A1, k=k1, τ=t0_1)
         lik1 = 0.0
         if rt > t0_1
             try
@@ -152,7 +156,7 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame)
         end
 
         # --- LBA COMPONENT 2 (Slow Mode) ---
-        lba2 = LBA(ν=drift_rates, A=A2, k=k2, τ=t0_2)
+        lba2 = LBA(ν=drift_rates2, A=A2, k=k2, τ=t0_2)
         lik2 = 0.0
         if rt > t0_2
             try

@@ -289,7 +289,7 @@ function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condi
     best = Optim.minimizer(result)
 
     results_df = DataFrame(
-        Parameter = ["Capacity(C)", "RewardSlope(w)", "StartVar1(A1)", "ThreshGap1(k1)",
+        Parameter = ["Capacity1(C1)", "Capacity2(C2)", "RewardSlope(w)", "StartVar1(A1)", "ThreshGap1(k1)",
                      "NonDec1(t0_1)", "StartVar2(A2)", "ThreshGap2(k2)", "NonDec2(t0_2)", "ProbMix(p_mix)"],
         Value = best
     )
