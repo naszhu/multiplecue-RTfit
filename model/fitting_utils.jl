@@ -311,7 +311,7 @@ function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condi
 end
 
 """
-    generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing)
+    generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
 
     Generates a plot for dual-LBA mixture model showing both LBA components separately.
 
@@ -321,8 +321,9 @@ end
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title
     - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
+    - config: Optional ModelConfig object with display flags
 """
-function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing)
+function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
     println("Generating plot for dual-LBA model...")
 
     # Unpack parameters
@@ -506,17 +507,21 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     max_lba2_dens = y_pred_lba2[max_lba2_idx]
 
     # Plot components - total
-    plot!(p, t_grid, y_pred_lba1, label="LBA Component 1 (Fast, p=$(round(p_mix, digits=3)))", 
+    plot!(p, t_grid, y_pred_lba1, label="LBA Component 1 (Fast, p=$(round(p_mix, digits=3)))",
           linewidth=2, color=:orange, linestyle=:dash, alpha=0.7)
-    plot!(p, t_grid, y_pred_lba2, label="LBA Component 2 (Slow, p=$(round(1-p_mix, digits=3)))", 
+    plot!(p, t_grid, y_pred_lba2, label="LBA Component 2 (Slow, p=$(round(1-p_mix, digits=3)))",
           linewidth=2, color=:green, linestyle=:dash, alpha=0.7)
     plot!(p, t_grid, y_pred_total, label="Total Mixture", linewidth=3, color=:red)
-    
-    # Plot choice-specific densities
-    plot!(p, t_grid, y_pred_target_total, label="Target Choice (Highest Reward)", 
-          linewidth=2.5, color=:purple, linestyle=:solid, alpha=0.8)
-    plot!(p, t_grid, y_pred_distractor_total, label="Distractor Choices", 
-          linewidth=2.5, color=:brown, linestyle=:solid, alpha=0.8)
+
+    # Plot choice-specific densities (controlled by config flags)
+    if isnothing(config) || config.show_target_choice
+        plot!(p, t_grid, y_pred_target_total, label="Target Choice (Highest Reward)",
+              linewidth=2.5, color=:purple, linestyle=:solid, alpha=0.8)
+    end
+    if isnothing(config) || config.show_distractor_choice
+        plot!(p, t_grid, y_pred_distractor_total, label="Distractor Choices",
+              linewidth=2.5, color=:brown, linestyle=:solid, alpha=0.8)
+    end
 
     # Add vertical lines at peaks
     vline!(p, [max_lba1_rt], color=:orange, linestyle=:dot, linewidth=1, alpha=0.5, label="")
