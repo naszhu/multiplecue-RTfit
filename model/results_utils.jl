@@ -9,7 +9,7 @@ using DataFrames
 using CSV
 using Optim
 
-export save_results, save_results_dual, save_results_single
+export save_results, save_results_dual, save_results_single, save_results_allconditions
 
 """
     save_results(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
@@ -118,6 +118,41 @@ function save_results_single(result, output_csv="model_fit_results.csv"; cue_con
     output_path = joinpath(outputdata_dir, basename(output_csv))
     CSV.write(output_path, results_df)
     println("Saved parameters to $output_path")
+
+    return results_df
+end
+
+"""
+    save_results_allconditions(result, output_csv="model_fit_results.csv")
+
+    Saves the optimization results for all-conditions model (shared parameters) to a CSV file.
+
+    Arguments:
+    - result: Optim result object
+    - output_csv: Output filename
+
+    Returns parameter names and values as a DataFrame.
+"""
+function save_results_allconditions(result, output_csv="model_fit_results.csv"; param_names=nothing)
+    best = Optim.minimizer(result)
+
+    names = isnothing(param_names) ? ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)"] : param_names
+    results_df = DataFrame(Parameter = names, Value = best[1:length(names)])
+
+    # Add note that these are shared parameters
+    results_df.Note = fill("Shared across all conditions", nrow(results_df))
+
+    # Create outputdata subfolder if it doesn't exist
+    outputdata_dir = joinpath(@__DIR__, "outputdata")
+    if !isdir(outputdata_dir)
+        mkdir(outputdata_dir)
+        println("Created outputdata directory: $outputdata_dir")
+    end
+
+    # Save to outputdata subfolder
+    output_path = joinpath(outputdata_dir, basename(output_csv))
+    CSV.write(output_path, results_df)
+    println("Saved SHARED parameters to $output_path")
 
     return results_df
 end

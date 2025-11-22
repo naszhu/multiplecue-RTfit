@@ -58,9 +58,14 @@ end
     Reads a PsychoPy .dat file, finding the correct header line.
 """
 function read_psychopy_dat(filepath)
-    # Find header line by reading all lines first
-    lines = readlines(filepath)
-    header_line = findfirst(l -> occursin("ExperimentName", l) && occursin("RT", l), lines)
+    # Find header line by scanning once; avoids loading whole file into memory
+    header_line = nothing
+    for (i, line) in enumerate(eachline(filepath))
+        if occursin("ExperimentName", line) && occursin("RT", line)
+            header_line = i
+            break
+        end
+    end
 
     if isnothing(header_line)
         println("Warning: Could not find valid header in $filepath. Skipping.")
@@ -147,14 +152,16 @@ function load_and_process_data(path, file_pattern="*.dat")
     println("After RT filtering: $(nrow(full_df)) (removed $(before_rt_filter - nrow(full_df)))")
 
     # Determine Choice from PointTargetResponse
-    choices = Int[]
-    for row in eachrow(full_df)
-        n_options = length(row.ParsedRewards)
-        val = parse_clean_float(row.PointTargetResponse)
-        c = ismissing(val) ? 0 : Int(val)
-        push!(choices, (c > 0 && c <= n_options) ? c : 0)
+    nrows = nrow(full_df)
+    choices = Vector{Int}(undef, nrows)
+    point_responses = full_df.PointTargetResponse
+    parsed_rewards = full_df.ParsedRewards
+    @inbounds for i in 1:nrows
+        n_options = length(parsed_rewards[i])
+        val = parse_clean_float(point_responses[i])
+        c = (ismissing(val) || val <= 0 || val > n_options) ? 0 : Int(val)
+        choices[i] = c
     end
-    full_df.Choice = choices
     full_df.Choice = choices
 
     # Filter invalid choices

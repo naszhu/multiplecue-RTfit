@@ -5,8 +5,8 @@
 
 module Config
 
-export ModelConfig, SingleLBAParams, DualLBAParams, DataConfig
-export get_default_single_params, get_default_dual_params, get_data_config
+export ModelConfig, SingleLBAParams, DualLBAParams, DataConfig, OptimizationConfig
+export get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config, get_weighting_mode
 
 """
     ModelConfig
@@ -57,16 +57,37 @@ struct DualLBAParams
     x0::Vector{Float64}
 end
 
+# Default weighting mode for reward transforms (either :exponential or :free)
+const DEFAULT_WEIGHTING_MODE = :free
+
+"""
+    get_weighting_mode()
+
+Returns the default weighting mode for reward-to-weight transform.
+Change `DEFAULT_WEIGHTING_MODE` to `:free` to estimate separate weights per reward value.
+"""
+get_weighting_mode() = DEFAULT_WEIGHTING_MODE
+
 """
     get_default_single_params()
 
 Returns default parameter bounds and initial values for single LBA model.
 Parameters: [C, w_slope, A, k, t0]
 """
-function get_default_single_params()
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.6]
-    x0    = [10.0, 1.0,   0.2,  0.2,  0.25]
+function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)
+    if weighting_mode == :exponential
+        lower = [1.0,  0.0,   0.01, 0.05, 0.05]   # C, w_slope, A, k, t0
+        upper = [30.0, 10.0,  1.0,  1.0,  0.6]
+        x0    = [10.0, 1.0,   0.2,  0.2,  0.25]
+    elseif weighting_mode == :free
+        # Free weights: [C, w2, w3, w4, A, k, t0] with w1 fixed at 1.0 baseline
+        lower = [1.0,  1.0, 1.0, 1.0,   0.01, 0.05, 0.05]
+        upper = [30.0, 50.0, 50.0, 50.0, 1.0,  1.0,  0.6]
+        x0    = [10.0, 2.0,  5.0, 10.0, 0.2,  0.2,  0.25]
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free")
+    end
+
     return SingleLBAParams(lower, upper, x0)
 end
 
@@ -134,6 +155,48 @@ function get_data_config(participant_id::Int)
     data_path = joinpath("..", "data", participant_folder_name, participant_folder_name)
 
     return DataConfig(participant_id, data_path, "*.dat")
+end
+
+"""
+    OptimizationConfig
+
+Configuration settings for optimization tolerances and limits.
+
+Fields:
+- g_tol::Float64 - Gradient tolerance (smaller = more precise but slower)
+- f_reltol::Float64 - Relative function tolerance (stop when improvement < this %)
+- x_reltol::Float64 - Relative parameter tolerance
+- max_iterations::Int - Maximum number of iterations
+- time_limit::Float64 - Maximum time in seconds
+
+Adjust these values to trade off between speed and precision:
+- For faster fitting: increase tolerances (e.g., g_tol=1e-2, f_reltol=1e-3)
+- For more precise fitting: decrease tolerances (e.g., g_tol=1e-4, f_reltol=1e-5)
+"""
+struct OptimizationConfig
+    g_tol::Float64
+    f_reltol::Float64
+    x_reltol::Float64
+    max_iterations::Int
+    time_limit::Float64
+end
+
+"""
+    get_optimization_config()
+
+Returns default optimization configuration.
+
+Current settings are optimized for SPEED with acceptable precision.
+You can modify these values here to change optimization behavior globally.
+"""
+function get_optimization_config()
+    return OptimizationConfig(
+        1e-2,      # g_tol: Very relaxed gradient tolerance for speed
+        1e-3,      # f_reltol: Stop when improvement < 0.1%
+        1e-3,      # x_reltol: Relaxed parameter tolerance
+        300,       # max_iterations: Lower cap for faster termination
+        600.0      # time_limit: Maximum time in seconds
+    )
 end
 
 end # module

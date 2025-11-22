@@ -13,6 +13,7 @@ using Plots
 
 export generate_plot, generate_plot_dual, generate_plot_single
 export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot_single
+export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
 
 """
     generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
@@ -1160,6 +1161,364 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nSingle LBA Model - Condition-Specific Fitted Parameters"
+    p = plot(size=(1200, 700), title=title_str,
+             xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
+             ylim=(0, 1.05), legend=:bottomright)
+
+    x_pos = 1:length(condition_labels)
+    scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
+    scatter!(p, x_pos, predicted_acc, label="Predicted", color=:red, markersize=10, alpha=0.8, marker=:x)
+
+    # Add lines connecting points
+    plot!(p, x_pos, observed_acc, linestyle=:dash, color=:blue, alpha=0.3, label="")
+    plot!(p, x_pos, predicted_acc, linestyle=:dash, color=:red, alpha=0.3, label="")
+
+    # Add perfect accuracy line
+    plot!(p, [0, length(condition_labels)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
+
+    # Set x-axis labels
+    plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
+
+    # Add trial count annotations
+    for (i, n) in enumerate(n_trials_per_cond)
+        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+    end
+
+    savefig(p, output_plot)
+    println("Saved overall accuracy plot to $output_plot")
+
+    if length(observed_acc) > 0
+        mean_obs = mean(observed_acc)
+        mean_pred = mean(predicted_acc)
+        rmse = sqrt(mean((observed_acc .- predicted_acc).^2))
+        println("  Mean observed accuracy: $(round(mean_obs, digits=3))")
+        println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
+        println("  RMSE: $(round(rmse, digits=3))")
+    end
+end
+
+"""
+    generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+
+    Generates a plot for single LBA model fitted to ALL conditions with SHARED parameters.
+    This version shows the fit to RT distribution for a specific condition using the shared parameters.
+
+    Arguments:
+    - data: DataFrame with CleanRT, Choice, and ParsedRewards columns (for specific condition)
+    - params: Vector of SHARED model parameters [C, w, A, k, t0] (same across all conditions)
+    - output_plot: Output filename for plot
+    - cue_condition: Cue condition identifier for plot title
+    - r_max: Maximum reward value across entire experiment (for consistent normalization)
+    - config: Optional ModelConfig object with display flags
+"""
+function generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, weighting_mode::Symbol=:exponential)
+    println("Generating plot for all-conditions model (shared parameters)...")
+
+    # Unpack parameters based on weighting mode
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+    end
+
+    # Create title
+    title_str = "Single LBA Fit (Shared Parameters Across All Conditions)"
+    if !isnothing(cue_condition)
+        weight_str = weighting_mode == :exponential ?
+                     "θ=$(round(w_slope, digits=2))" :
+                     "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
+        title_str = "Cue Condition: $cue_condition\n(Shared: C=$(round(C, digits=2)), $weight_str, t0=$(round(t0, digits=3))s)"
+    end
+
+    # Compute kernel density estimate (KDE) for observed data
+    rt_min = minimum(data.CleanRT)
+    rt_max = maximum(data.CleanRT)
+    rt_range = rt_max - rt_min
+    kde_grid = range(max(0.05, rt_min - 0.1*rt_range), min(1.5, rt_max + 0.1*rt_range), length=200)
+
+    # Adaptive bandwidth using Silverman's rule of thumb
+    n = length(data.CleanRT)
+    rt_std = std(data.CleanRT)
+    rt_quantiles = quantile(data.CleanRT, [0.25, 0.75])
+    rt_iqr = rt_quantiles[2] - rt_quantiles[1]
+    bandwidth = 0.9 * min(rt_std, rt_iqr / 1.34) * (n ^ (-1/5))
+    bandwidth = max(bandwidth, 0.01)
+
+    # Simple KDE using Gaussian kernel
+    kde_dens = zeros(length(kde_grid))
+    for (i, t) in enumerate(kde_grid)
+        kde_dens[i] = mean([pdf(Normal(t, bandwidth), rt) for rt in data.CleanRT])
+    end
+
+    # Normalize to proper density (integral = 1)
+    dx = kde_grid[2] - kde_grid[1]
+    kde_dens ./= sum(kde_dens) * dx
+
+    # Create plot with KDE line
+    p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5,
+             color=:darkblue, linestyle=:solid, alpha=0.8,
+             xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
+             legend=:topright, size=(800, 600))
+
+    # Compute unconditional PDF
+    t_grid = range(0.05, 1.5, length=300)
+    y_pred_total = zeros(length(t_grid))
+    # Choice-specific densities: target (highest reward) vs distractors
+    y_pred_target = zeros(length(t_grid))
+    y_pred_distractor = zeros(length(t_grid))
+
+    # Compute r_max if exponential weighting is used
+    if weighting_mode == :exponential
+        if isnothing(r_max)
+            r_max = 0.0
+            for rewards in data.ParsedRewards
+                if !isempty(rewards)
+                    r_max = max(r_max, maximum(rewards))
+                end
+            end
+            if r_max <= 0.0
+                r_max = 1.0
+            end
+        end
+    else
+        r_max = isnothing(r_max) ? 1.0 : r_max
+    end
+
+    # Get unique reward structures
+    reward_counts = Dict()
+    reward_arrays = Dict()
+    for rewards in data.ParsedRewards
+        key = string(rewards)
+        if !haskey(reward_counts, key)
+            reward_counts[key] = 0
+            reward_arrays[key] = rewards
+        end
+        reward_counts[key] += 1
+    end
+
+    total_weight = 0.0
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+    for (key, rewards) in reward_arrays
+        weight = reward_counts[key]
+        total_weight += weight
+
+        # Reconstruct drift rates using selected weighting function
+        ws = weighting_mode == :exponential ?
+             exp.(w_slope .* rewards ./ r_max) :
+             [get(weight_lookup, r, default_weight) for r in rewards]
+        vs = C .* (ws ./ sum(ws))
+
+        # Single LBA component with SHARED parameters
+        lba = LBA(ν=vs, A=A, k=k, τ=t0)
+
+        # Identify target choice (highest reward option)
+        target_choice = argmax(rewards)
+        distractor_choices = [c for c in 1:length(vs) if c != target_choice]
+
+        for (j, t) in enumerate(t_grid)
+            # LBA density
+            lba_dens = 0.0
+            lba_target_dens = 0.0
+            lba_distractor_dens = 0.0
+            if t > t0
+                try
+                    lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
+                    lba_target_dens = pdf(lba, (choice=target_choice, rt=t))
+                    lba_distractor_dens = sum([pdf(lba, (choice=c, rt=t)) for c in distractor_choices])
+                    if isnan(lba_dens) || isinf(lba_dens) lba_dens = 0.0 end
+                    if isnan(lba_target_dens) || isinf(lba_target_dens) lba_target_dens = 0.0 end
+                    if isnan(lba_distractor_dens) || isinf(lba_distractor_dens) lba_distractor_dens = 0.0 end
+                catch
+                    lba_dens = 0.0
+                    lba_target_dens = 0.0
+                    lba_distractor_dens = 0.0
+                end
+            end
+
+            # Accumulate weighted
+            y_pred_total[j] += weight * lba_dens
+            y_pred_target[j] += weight * lba_target_dens
+            y_pred_distractor[j] += weight * lba_distractor_dens
+        end
+    end
+
+    # Normalize
+    if total_weight > 0
+        y_pred_total ./= total_weight
+        y_pred_target ./= total_weight
+        y_pred_distractor ./= total_weight
+    end
+
+    # Find peak
+    max_total_idx = argmax(y_pred_total)
+    max_total_rt = t_grid[max_total_idx]
+
+    # Plot model fit
+    plot!(p, t_grid, y_pred_total, label="Model Fit (Shared Params)", linewidth=3, color=:red)
+
+    # Plot choice-specific densities (controlled by config flags)
+    if isnothing(config) || config.show_target_choice
+        plot!(p, t_grid, y_pred_target, label="Target Choice (Highest Reward)",
+              linewidth=2.5, color=:purple, linestyle=:solid, alpha=0.8)
+    end
+    if isnothing(config) || config.show_distractor_choice
+        plot!(p, t_grid, y_pred_distractor, label="Distractor Choices",
+              linewidth=2.5, color=:brown, linestyle=:solid, alpha=0.8)
+    end
+
+    # Add vertical line at peak
+    vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
+
+    savefig(p, output_plot)
+    println("Saved plot to $output_plot")
+    println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
+    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Peak RT: $(round(max_total_rt, digits=3))s")
+
+    return p
+end
+
+"""
+    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
+
+    Generates one overall accuracy plot showing all CueConditions together using SHARED parameters.
+    Unlike the condition-specific versions, this uses the SAME parameters for all conditions.
+
+    Arguments:
+    - condition_data: Dictionary mapping CueCondition => DataFrame
+    - params: Vector of SHARED model parameters [C, w, A, k, t0] (same for all conditions)
+    - output_plot: Output filename for plot
+    - r_max: Maximum reward value across entire experiment (for consistent normalization)
+"""
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing, weighting_mode::Symbol=:exponential)
+    println("Generating overall accuracy plot for all conditions (shared parameters)...")
+
+    # Unpack SHARED parameters
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+    end
+
+    observed_acc = Float64[]
+    predicted_acc = Float64[]
+    condition_labels = String[]
+    n_trials_per_cond = Int[]
+
+    # RT grid for numerical integration
+    t_grid = range(0.05, 3.0, length=1000)
+    dt = t_grid[2] - t_grid[1]
+
+    # Weight lookup for free mode (w1 fixed to 1.0)
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+
+    # Sort conditions for consistent ordering
+    sorted_conditions = sort(collect(keys(condition_data)))
+
+    for cc in sorted_conditions
+        condition_df = condition_data[cc]
+
+        # Compute r_max only if exponential weighting is requested
+        if weighting_mode == :exponential
+            if isnothing(r_max)
+                r_max_cond = 0.0
+                for rewards in condition_df.ParsedRewards
+                    if !isempty(rewards)
+                        r_max_cond = max(r_max_cond, maximum(rewards))
+                    end
+                end
+                if r_max_cond <= 0.0
+                    r_max_cond = 1.0
+                end
+                r_max_use = r_max_cond
+            else
+                r_max_use = r_max
+            end
+        else
+            r_max_use = isnothing(r_max) ? 1.0 : r_max
+        end
+
+        # Group by unique reward structures within this condition
+        reward_groups = Dict()
+        for (i, row) in enumerate(eachrow(condition_df))
+            rewards = row.ParsedRewards
+            key = string(rewards)
+            if !haskey(reward_groups, key)
+                reward_groups[key] = Dict(
+                    "rewards" => rewards,
+                    "target_choice" => argmax(rewards),
+                    "choices" => Int[],
+                    "n_trials" => 0
+                )
+            end
+            push!(reward_groups[key]["choices"], row.Choice)
+            reward_groups[key]["n_trials"] += 1
+        end
+
+        # Compute weighted average accuracy across all reward structures in this condition
+        total_obs_correct = 0
+        total_trials = 0
+        total_pred_prob = 0.0
+        total_weight = 0.0
+
+        for (key, group) in reward_groups
+            rewards = group["rewards"]
+            target_choice = group["target_choice"]
+            choices = group["choices"]
+            n_trials = group["n_trials"]
+
+            # Observed accuracy for this reward structure
+            n_correct = sum(choices .== target_choice)
+            total_obs_correct += n_correct
+            total_trials += n_trials
+
+            # Predicted accuracy for this reward structure using SHARED parameters
+            ws = weighting_mode == :exponential ?
+                 exp.(w_slope .* rewards ./ r_max_use) :
+                 [get(weight_lookup, r, default_weight) for r in rewards]
+            vs = C .* (ws ./ sum(ws))
+
+            lba = LBA(ν=vs, A=A, k=k, τ=t0)
+
+            # Compute choice probability
+            pred_prob = 0.0
+
+            for t in t_grid
+                if t > t0
+                    try
+                        prob = pdf(lba, (choice=target_choice, rt=t))
+                        if !isnan(prob) && !isinf(prob) && prob > 0
+                            pred_prob += prob * dt
+                        end
+                    catch
+                    end
+                end
+            end
+
+            # Weight by number of trials
+            total_pred_prob += pred_prob * n_trials
+            total_weight += n_trials
+        end
+
+        if total_trials > 0
+            obs_acc = total_obs_correct / total_trials
+            pred_acc = total_weight > 0 ? total_pred_prob / total_weight : 0.0
+
+            push!(observed_acc, obs_acc)
+            push!(predicted_acc, pred_acc)
+            push!(condition_labels, string(cc))
+            push!(n_trials_per_cond, total_trials)
+        end
+    end
+
+    # Create plot
+    title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nShared Parameters Across All Conditions"
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
              ylim=(0, 1.05), legend=:bottomright)
