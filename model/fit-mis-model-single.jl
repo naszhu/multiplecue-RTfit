@@ -1,16 +1,14 @@
 # ==========================================================================
-# MIS-LBA Dual Mixture Model Fitting Script
+# MIS-LBA Single Component Model Fitting Script
 # ==========================================================================
 #
-# This script fits a dual-LBA mixture model that uses TWO LBA components
-# with different parameters to capture bimodality, rather than LBA + express.
+# This script fits a single LBA model (NO mixture) to capture decision
+# processes using the MIS (Multiple-Item Selection) theory.
 #
-# The model assumes bimodality comes from two different decision processes:
-# - LBA Component 1: Fast mode (lower thresholds, faster non-decision time)
-# - LBA Component 2: Slow mode (higher thresholds, slower non-decision time)
-#
-# This is more appropriate when bimodality is within the normal LBA range
-# rather than from express responses (< 0.3s).
+# The model assumes a single decision process with:
+# - Reward-based attentional weights determining drift rates
+# - Standard LBA decision threshold and non-decision time
+# - No mixture components (no bimodality modeling)
 #
 # ==========================================================================
 
@@ -32,11 +30,11 @@ using .Config
 # ==========================================================================
 
 # ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
+const PARTICIPANT_ID = 3  # Options: 1, 2, or 3
 # ========================================================
 
-const OUTPUT_CSV = "model_fit_results_dual.csv"
-const OUTPUT_PLOT = "model_fit_plot_dual.png"
+const OUTPUT_CSV = "model_fit_results_single.csv"
+const OUTPUT_PLOT = "model_fit_plot_single.png"
 
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
@@ -52,7 +50,6 @@ function run_analysis()
     println("Data path: $(data_config.data_base_path)")
 
     # Create configuration with plot display flags
-    # Set to false to disable target/distractor choice lines in plots
     plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
 
     # Create images subfolder if it doesn't exist
@@ -77,7 +74,7 @@ function run_analysis()
     cue_conditions = unique(data.CueCondition)
     filter!(x -> !ismissing(x), cue_conditions)
     sort!(cue_conditions)
-    
+
     println("\nFound $(length(cue_conditions)) unique cue conditions:")
     for (i, cc) in enumerate(cue_conditions)
         n_trials = sum(data.CueCondition .== cc)
@@ -88,41 +85,24 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("COMPUTING EXPERIMENT-WIDE r_max")
     println("=" ^ 70)
-    
-    # Find maximum reward across all trials in the entire experiment
-    # ParsedRewards is a column where each element is an array like [0.0, 4.0, 1.0, 0.0]
-    # We need to find the maximum value across all arrays
     r_max = 0.0
     for rewards in data.ParsedRewards
         if !isempty(rewards)
             r_max = max(r_max, maximum(rewards))
         end
     end
-    
-    # Check assertion after processing all rewards
-    if r_max <= 0.0
-        r_max = 1.0
-    end
-    
-    # Optional: Show some examples of ParsedRewards for debugging
-    println("Sample ParsedRewards examples:")
-    for (i, rewards) in enumerate(data.ParsedRewards[1:min(5, nrow(data))])
-        if !isempty(rewards)
-            println("  Row $i: $rewards")
-        end
-    end
-    
+    @assert r_max == 4 "rmax calculated incorrectly current number is: $(r_max)"
+
     println("r_max (maximum reward across entire experiment): $r_max")
-    @assert r_max == 4 "rmax calculated incorrectly: expected 4, got $r_max"
     println("This value will be used consistently across all conditions for weight normalization.")
 
     # Step 3: Set up optimization parameters
     println("\n" * "=" ^ 70)
-    println("FITTING DUAL-LBA MODEL FOR EACH CUE CONDITION")
+    println("FITTING SINGLE LBA MODEL FOR EACH CUE CONDITION")
     println("=" ^ 70)
 
     # Get parameter bounds and initial values from configuration
-    params_config = get_default_dual_params()
+    params_config = get_default_single_params()
     lower = params_config.lower
     upper = params_config.upper
     x0 = params_config.x0
@@ -133,31 +113,65 @@ function run_analysis()
     condition_fits = Dict()
     # Store individual plot objects for combined plot
     individual_plots = []
-    
+
     # Step 4: Fit model for each cue condition
     for (idx, cue_cond) in enumerate(cue_conditions)
         println("\n" * "-" ^ 70)
         println("FITTING CUE CONDITION: $cue_cond ($idx/$(length(cue_conditions)))")
         println("-" ^ 70)
-        
+
         # Filter data for this cue condition
         condition_data = filter(row -> row.CueCondition == cue_cond, data)
         n_trials = nrow(condition_data)
         println("Number of trials: $n_trials")
-        
+
         if n_trials < 10
             println("WARNING: Too few trials ($n_trials) for cue condition $cue_cond. Skipping...")
             continue
         end
 
-        # Fit the dual-LBA model for this condition
+        # Fit the single LBA model for this condition
         # Pass r_max to ensure consistent normalization across all conditions
-        result = fit_model(condition_data, mis_lba_dual_mixture_loglike;
+        result = fit_model(condition_data, mis_lba_single_loglike;
                            lower=lower, upper=upper, x0=x0, time_limit=600.0, r_max=r_max)
 
+        # Print all parameters (optimized and fixed)
+        println("\n" * "=" ^ 70)
+        println("FITTED PARAMETERS FOR CUE CONDITION: $cue_cond")
+        println("=" ^ 70)
+        
+        best_params = Optim.minimizer(result)
+        param_names = ["C", "w_slope", "A", "k", "t0"]
+        
+        println("\n--- OPTIMIZED PARAMETERS (in search) ---")
+        for (i, name) in enumerate(param_names)
+            println("  $name = $(round(best_params[i], digits=6))  [bounds: $(lower[i]) - $(upper[i])]")
+        end
+        
+        println("\n--- FIXED PARAMETERS (out of search) ---")
+        println("  r_max = $r_max  (experiment-wide maximum reward, used for MIS weight normalization)")
+        
+        println("\n--- PARAMETER DESCRIPTIONS ---")
+        println("  C: Capacity parameter (drift rate scaling)")
+        println("  w_slope: Reward weight slope (θ in MIS theory: exp(θ * r / r_max))")
+        println("  A: Maximum start point variability in LBA")
+        println("  k: Threshold gap in LBA (b - A, where b is decision threshold)")
+        println("  t0: Non-decision time in LBA")
+        println("  r_max: Maximum reward value across entire experiment (fixed, not optimized)")
+        
+        println("\n--- MIS THEORY PARAMETERS ---")
+        println("  Weight calculation: w_i = exp(w_slope * r_i / r_max)")
+        println("  Relative weights: rel_w_i = w_i / Σw_j")
+        println("  Drift rates: ν_i = C * rel_w_i")
+        
+        println("\n--- LBA PARAMETERS ---")
+        println("  LBA model: LBA(ν=drift_rates, A=A, k=k, τ=t0)")
+        println("  where: ν = drift rates (vector), A = max start point, k = threshold gap, τ = non-decision time")
+        println("=" ^ 70)
+
         # Save results for this condition
-        results_df = save_results_dual(result,
-                                       "model_fit_results_dual_P$(data_config.participant_id)_condition_$(cue_cond).csv";
+        results_df = save_results_single(result,
+                                       "model_fit_results_single_P$(data_config.participant_id)_condition_$(cue_cond).csv";
                                        cue_condition=cue_cond)
         push!(all_results, results_df)
 
@@ -166,21 +180,21 @@ function run_analysis()
         condition_fits[cue_cond] = (data=condition_data, params=best_params)
 
         # Generate plots for this condition
-        plot_path = joinpath(images_dir, "model_fit_plot_dual_P$(data_config.participant_id)_condition_$(cue_cond).png")
-        p = generate_plot_dual(condition_data, best_params,
+        plot_path = joinpath(images_dir, "model_fit_plot_single_P$(data_config.participant_id)_condition_$(cue_cond).png")
+        p = generate_plot_single(condition_data, best_params,
                               plot_path;
                               cue_condition=cue_cond, r_max=r_max, config=plot_config)
         push!(individual_plots, p)
     end
-    
+
     # Step 4.5: Generate overall accuracy plot showing all conditions
     if !isempty(condition_fits)
         println("\n" * "=" ^ 70)
         println("GENERATING OVERALL ACCURACY PLOT")
         println("=" ^ 70)
 
-        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_dual_P$(data_config.participant_id)_all_conditions.png")
-        generate_overall_accuracy_plot(condition_fits, overall_accuracy_plot; r_max=r_max)
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_single_P$(data_config.participant_id)_all_conditions.png")
+        generate_overall_accuracy_plot_single(condition_fits, overall_accuracy_plot; r_max=r_max)
     end
 
     # Step 4.6: Generate combined RT fit plot for all conditions
@@ -195,21 +209,19 @@ function run_analysis()
         n_rows = ceil(Int, n_plots / n_cols)
 
         # Create combined plot with larger fonts
-        # Font sizes are set globally and should apply to all subplots
         combined_plot = plot(individual_plots...,
                             layout=(n_rows, n_cols),
                             size=(n_cols * 600, n_rows * 500),
-                            plot_title="Dual-LBA Mixture Fit - Participant $(data_config.participant_id) - All Conditions",
+                            plot_title="Single LBA Fit - Participant $(data_config.participant_id) - All Conditions",
                             plot_titlefontsize=18,
-                            # Set font sizes for all subplots
                             titlefontsize=14,
                             legendfontsize=12,
                             guidefontsize=14,
                             tickfontsize=12,
-                            fontsize=12)  # Base font size
+                            fontsize=12)
 
         # Save combined plot
-        combined_plot_path = joinpath(images_dir, "model_fit_plot_dual_P$(data_config.participant_id)_all_conditions.png")
+        combined_plot_path = joinpath(images_dir, "model_fit_plot_single_P$(data_config.participant_id)_all_conditions.png")
         savefig(combined_plot, combined_plot_path)
         println("Saved combined RT fit plot to $combined_plot_path")
     end
@@ -230,7 +242,7 @@ function run_analysis()
         end
 
         # Save to outputdata subfolder with participant ID
-        output_filename = "model_fit_results_dual_P$(data_config.participant_id).csv"
+        output_filename = "model_fit_results_single_P$(data_config.participant_id).csv"
         output_path = joinpath(outputdata_dir, output_filename)
         CSV.write(output_path, combined_results)
         println("\nCombined fitted parameters:")
@@ -244,10 +256,9 @@ function run_analysis()
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Participant: $(data_config.participant_id)")
-    println("Combined results saved to outputdata/model_fit_results_dual_P$(data_config.participant_id).csv")
+    println("Combined results saved to outputdata/model_fit_results_single_P$(data_config.participant_id).csv")
     println("Individual condition results and plots saved with condition-specific filenames")
-    println("\nNote: This model uses TWO LBA components to capture bimodality,")
-    println("      rather than LBA + express responses.")
+    println("\nNote: This model uses a single LBA component (no mixture).")
 end
 
 # ==========================================================================
@@ -262,4 +273,3 @@ using Plots  # Needed for combining plots
 if abspath(PROGRAM_FILE) == @__FILE__
     run_analysis()
 end
-

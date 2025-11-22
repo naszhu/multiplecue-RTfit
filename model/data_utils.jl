@@ -58,9 +58,14 @@ end
     Reads a PsychoPy .dat file, finding the correct header line.
 """
 function read_psychopy_dat(filepath)
-    # Find header line by reading all lines first
-    lines = readlines(filepath)
-    header_line = findfirst(l -> occursin("ExperimentName", l) && occursin("RT", l), lines)
+    # Find header line by scanning once; avoids loading whole file into memory
+    header_line = nothing
+    for (i, line) in enumerate(eachline(filepath))
+        if occursin("ExperimentName", line) && occursin("RT", line)
+            header_line = i
+            break
+        end
+    end
 
     if isnothing(header_line)
         println("Warning: Could not find valid header in $filepath. Skipping.")
@@ -68,10 +73,13 @@ function read_psychopy_dat(filepath)
     end
 
     try
+        # Force CueValues to be read as String to preserve leading zeros
+        # CueValues is always a 4-digit string (e.g., "0420", "1234")
         df = CSV.read(filepath, DataFrame;
                       delim='\t',
                       header=header_line,
-                      silencewarnings=true)
+                      silencewarnings=true,
+                      types=Dict("CueValues" => String))
         return df
     catch e
         println("Error reading $filepath: $e")
@@ -118,7 +126,7 @@ function load_and_process_data(path, file_pattern="*.dat")
             end
             
             # Keep relevant columns if they exist
-            cols_needed = ["RT", "CueValues", "RespLoc", "PointTargetResponse", "CueResponseValue", "CueCondition"]
+            cols_needed = ["RT", "CueValues", "PointTargetResponse", "CueCondition"]
             cols_present = intersect(names(dt), cols_needed)
             select!(dt, cols_present)
             push!(df_list, dt)
@@ -143,50 +151,16 @@ function load_and_process_data(path, file_pattern="*.dat")
     filter!(row -> !ismissing(row.CleanRT) && 0.05 < row.CleanRT < 3.0, full_df)
     println("After RT filtering: $(nrow(full_df)) (removed $(before_rt_filter - nrow(full_df)))")
 
-    # Determine Choice
-    choices = Int[]
-    for row in eachrow(full_df)
-        c = 0
-        n_options = length(row.ParsedRewards)
-
-        # Strategy A: Check PointTargetResponse (most reliable when valid)
-        if "PointTargetResponse" in names(full_df)
-            val = parse_clean_float(row.PointTargetResponse)
-            if !ismissing(val)
-                c_candidate = Int(val)
-                # Validate: PointTargetResponse must be within bounds
-                if c_candidate > 0 && c_candidate <= n_options
-                    c = c_candidate
-                end
-            end
-        end
-
-        # Strategy B: Infer from CueResponseValue if PointTargetResponse is invalid
-        # This handles cases where PointTargetResponse uses fixed positions (1-4)
-        # but there are fewer than 4 options
-        if c == 0 && "CueResponseValue" in names(full_df)
-            val = parse_clean_float(row.CueResponseValue)
-            if !ismissing(val)
-                idx = findfirst(x -> x == val, row.ParsedRewards)
-                if !isnothing(idx)
-                    c = idx
-                end
-            end
-        end
-
-        # Strategy C: Check RespLoc if both failed
-        if c == 0 && "RespLoc" in names(full_df)
-            val = parse_clean_float(row.RespLoc)
-            if !ismissing(val)
-                c_candidate = Int(val)
-                # Validate: RespLoc must be within bounds
-                if c_candidate > 0 && c_candidate <= n_options
-                    c = c_candidate
-                end
-            end
-        end
-
-        push!(choices, c)
+    # Determine Choice from PointTargetResponse
+    nrows = nrow(full_df)
+    choices = Vector{Int}(undef, nrows)
+    point_responses = full_df.PointTargetResponse
+    parsed_rewards = full_df.ParsedRewards
+    @inbounds for i in 1:nrows
+        n_options = length(parsed_rewards[i])
+        val = parse_clean_float(point_responses[i])
+        c = (ismissing(val) || val <= 0 || val > n_options) ? 0 : Int(val)
+        choices[i] = c
     end
     full_df.Choice = choices
 
