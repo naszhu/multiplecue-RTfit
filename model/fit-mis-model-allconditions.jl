@@ -145,7 +145,6 @@ function run_analysis()
     println("OPTIMIZATION SETUP")
     println("-" ^ 70)
     println("Parameter bounds:")
-    param_names = ["C", "w_slope", "A", "k", "t0"]
     for (i, name) in enumerate(param_names)
         println("  $name: [$(lower[i]), $(upper[i])], initial: $(x0[i])")
     end
