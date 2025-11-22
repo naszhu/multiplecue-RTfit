@@ -13,18 +13,14 @@ using Distributions
 using SequentialSamplingModels
 using Statistics
 using Plots
+using Main.Config
 
-# Shared styling defaults for RT plots across all conditions
-const RT_ALLCONDITIONS_YLIM = (0.0, 10.5)
-const AXIS_FONT_SIZE = 12
+# Shared styling defaults pulled from centralized Config
+const RT_ALLCONDITIONS_YLIM = Config.RT_ALLCONDITIONS_YLIM
+const AXIS_FONT_SIZE = Config.AXIS_FONT_SIZE
 
-# Accuracy plot y-limits; pull from Config if available, otherwise fall back.
-# Kept as a helper to avoid hard-failing if Config was not imported first.
-const DEFAULT_ACCURACY_YLIM = (0.5, 1.0)
-get_accuracy_ylim()::Tuple{Float64,Float64} = begin
-    cfg = (isdefined(Main, :Config) && isdefined(Main.Config, :ACCURACY_YLIM)) ? Main.Config.ACCURACY_YLIM : DEFAULT_ACCURACY_YLIM
-    Tuple{Float64,Float64}(cfg)
-end
+# Accuracy plot y-limits
+get_accuracy_ylim()::Tuple{Float64,Float64} = Tuple{Float64,Float64}(Config.ACCURACY_YLIM)
 
 export generate_plot, generate_plot_dual, generate_plot_single
 export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot_single

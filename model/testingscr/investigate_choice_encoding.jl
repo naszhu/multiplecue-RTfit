@@ -8,6 +8,8 @@
 using Pkg
 include("data_utils.jl")
 using .DataUtils
+include("../config.jl")
+using .Config
 
 using CSV
 using DataFrames
@@ -23,15 +25,12 @@ function countmap(v)
     return d
 end
 
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
-
 println("=" ^ 70)
 println("INVESTIGATING CHOICE ENCODING")
 println("=" ^ 70)
 
 # Load data
-files = glob(FILE_PATTERN, DATA_PATH)
+files = glob(Config.FILE_PATTERN, Config.DATA_PATH)
 non_practice_files = filter(f -> !occursin("-Prac-", f), files)
 
 df_list = DataFrame[]
@@ -178,4 +177,3 @@ if !isempty(invalid_df)
     println("  This suggests PointTargetResponse may use a different encoding")
     println("  (e.g., fixed positions 1-4) while CueResponseValue matches actual selection")
 end
-

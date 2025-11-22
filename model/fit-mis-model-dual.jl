@@ -19,9 +19,9 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
 include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
@@ -33,20 +33,13 @@ using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 # CONFIGURATION
 # ==========================================================================
 
-# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
-# ========================================================
-
-const OUTPUT_CSV = joinpath(@__DIR__, "outputdata", "model_fit_results_dual_P$(PARTICIPANT_ID).csv")
-const OUTPUT_PLOT = "model_fit_plot_dual.png"
-
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
 # ==========================================================================
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID)
+    data_config = get_data_config(Config.PARTICIPANT_ID_DUAL)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
@@ -58,7 +51,7 @@ function run_analysis()
     plot_config = get_plot_config()
 
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -226,17 +219,17 @@ function run_analysis()
         combined_results = vcat(all_results...)
 
         # Create outputdata subfolder if it doesn't exist
-        outputdata_dir = dirname(OUTPUT_CSV)
+        outputdata_dir = dirname(Config.OUTPUT_CSV_DUAL)
         if !isdir(outputdata_dir)
             mkdir(outputdata_dir)
             println("Created outputdata directory: $outputdata_dir")
         end
 
         # Save to outputdata subfolder with participant ID
-        CSV.write(OUTPUT_CSV, combined_results)
+        CSV.write(Config.OUTPUT_CSV_DUAL, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
-        println("\nResults saved to: $OUTPUT_CSV")
+        println("\nResults saved to: $(Config.OUTPUT_CSV_DUAL)")
     else
         println("WARNING: No results to save!")
     end
@@ -245,7 +238,7 @@ function run_analysis()
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Participant: $(data_config.participant_id)")
-    println("Combined results saved to $OUTPUT_CSV")
+    println("Combined results saved to $(Config.OUTPUT_CSV_DUAL)")
     if SAVE_INDIVIDUAL_CONDITION_PLOTS
         println("Individual condition results and plots saved with condition-specific filenames")
     else

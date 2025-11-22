@@ -7,6 +7,8 @@
 using Pkg
 include("data_utils.jl")
 using .DataUtils
+include("../config.jl")
+using .Config
 
 using CSV
 using DataFrames
@@ -22,15 +24,12 @@ function countmap(v)
     return d
 end
 
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
-
 println("=" ^ 70)
 println("DIAGNOSTIC: INVESTIGATING EXCLUDED TRIALS")
 println("=" ^ 70)
 
 # Load data files
-files = glob(FILE_PATTERN, DATA_PATH)
+files = glob(Config.FILE_PATTERN, Config.DATA_PATH)
 non_practice_files = filter(f -> !occursin("-Prac-", f), files)
 
 println("\nFound $(length(files)) files total, $(length(non_practice_files)) non-practice files.")
@@ -254,4 +253,3 @@ println("After RT filtering: $after_rt_filter (removed $(initial_rows - after_rt
 valid_after_choice = sum((full_df.Choice .> 0) .& (full_df.Choice .<= length.(full_df.ParsedRewards)))
 println("Valid after choice filtering: $valid_after_choice (removed $(after_rt_filter - valid_after_choice))")
 println("\nTotal excluded: $(initial_rows - valid_after_choice) / $initial_rows ($(round(100*(initial_rows - valid_after_choice)/initial_rows, digits=1))%)")
-

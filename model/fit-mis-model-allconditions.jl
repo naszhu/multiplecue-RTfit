@@ -18,9 +18,9 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
 include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
@@ -32,38 +32,26 @@ using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 # CONFIGURATION
 # ==========================================================================
 
-# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 1  # Options: 1, 2, or 3
-# ========================================================
-
-# ========== REWARD WEIGHTING MODE ==========
-# Set to :exponential (original θ-based) or :free (fit w2, w3, w4 with w1 fixed at 1.0)
-const WEIGHTING_MODE_OVERRIDE = nothing  # leave as `nothing` to use Config.get_weighting_mode()
-# ===========================================
-
-const OUTPUT_CSV = "model_fit_results_allconditions.csv"
-const OUTPUT_PLOT = "model_fit_plot_allconditions.png"
-
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
 # ==========================================================================
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID)
+    data_config = get_data_config(Config.PARTICIPANT_ID_ALLCONDITIONS)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
     println("Selected Participant ID: $(data_config.participant_id)")
     println("Data path: $(data_config.data_base_path)")
-    weighting_mode = isnothing(WEIGHTING_MODE_OVERRIDE) ? get_weighting_mode() : WEIGHTING_MODE_OVERRIDE
+    weighting_mode = isnothing(Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS) ? get_weighting_mode() : Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS
     println("Reward weighting mode: $weighting_mode")
 
     # Create configuration with plot display flags
     plot_config = get_plot_config()  # from RunFlags
 
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")

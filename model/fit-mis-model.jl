@@ -23,9 +23,9 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
 include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
@@ -37,18 +37,13 @@ using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 # CONFIGURATION
 # ==========================================================================
 
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
-const OUTPUT_CSV = joinpath(@__DIR__, "outputdata", "model_fit_results.csv")
-const OUTPUT_PLOT = "model_fit_plot.png"
-
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
 # ==========================================================================
 
 function run_analysis()
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -58,7 +53,7 @@ function run_analysis()
     println("=" ^ 70)
     println("LOADING DATA")
     println("=" ^ 70)
-    data = load_and_process_data(DATA_PATH, FILE_PATTERN)
+    data = load_and_process_data(Config.DATA_PATH, Config.FILE_PATTERN)
 
     # Check if CueCondition column exists
     if !("CueCondition" in names(data))
@@ -135,15 +130,15 @@ function run_analysis()
 
     if !isempty(all_results)
         combined_results = vcat(all_results...)
-        output_dir = dirname(OUTPUT_CSV)
+        output_dir = dirname(Config.OUTPUT_CSV_MIXTURE)
         if !isdir(output_dir)
             mkdir(output_dir)
             println("Created outputdata directory: $output_dir")
         end
-        CSV.write(OUTPUT_CSV, combined_results)
+        CSV.write(Config.OUTPUT_CSV_MIXTURE, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
-        println("\nResults saved to: $OUTPUT_CSV")
+        println("\nResults saved to: $(Config.OUTPUT_CSV_MIXTURE)")
     else
         println("WARNING: No results to save!")
     end
@@ -151,7 +146,7 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
-    println("Combined results saved to: $OUTPUT_CSV")
+    println("Combined results saved to: $(Config.OUTPUT_CSV_MIXTURE)")
     if SAVE_INDIVIDUAL_CONDITION_PLOTS
         println("Individual condition results and plots saved with condition-specific filenames")
     else
