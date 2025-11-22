@@ -14,6 +14,14 @@ using SequentialSamplingModels
 using Statistics
 using Plots
 
+# Accuracy plot y-limits; pull from Config if available, otherwise fall back.
+# Kept as a helper to avoid hard-failing if Config was not imported first.
+const DEFAULT_ACCURACY_YLIM = (0.5, 1.0)
+get_accuracy_ylim()::Tuple{Float64,Float64} = begin
+    cfg = (isdefined(Main, :Config) && isdefined(Main.Config, :ACCURACY_YLIM)) ? Main.Config.ACCURACY_YLIM : DEFAULT_ACCURACY_YLIM
+    Tuple{Float64,Float64}(cfg)
+end
+
 export generate_plot, generate_plot_dual, generate_plot_single
 export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot_single
 export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
@@ -760,9 +768,10 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
 
         # Create plot
         title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)"
+        ylim_use = get_accuracy_ylim()
         p = plot(size=(1200, 700), title=title_str,
                  xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-                 ylim=(0, 1.05), legend=:topright)
+                 ylim=ylim_use, legend=:topright)
 
         x_pos = 1:length(condition_labels)
         scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=8, alpha=0.8)
@@ -779,8 +788,9 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
         plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
         # Add trial count annotations
+        annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
         for (i, n) in enumerate(n_trials_per_cond)
-            annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+            annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
         end
 
     else
@@ -848,8 +858,9 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
             title_str = "Choice Accuracy - Cue Condition: $cue_condition"
         end
 
+        ylim_use = get_accuracy_ylim()
         p = plot(size=(1000, 600), title=title_str, xlabel="Reward Structure",
-                 ylabel="Choice Probability (Target)", ylim=(0, 1.05), legend=:topright)
+                 ylabel="Choice Probability (Target)", ylim=ylim_use, legend=:topright)
 
         x_pos = 1:length(reward_keys)
         scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=6, alpha=0.7)
@@ -1016,9 +1027,10 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nUsing Condition-Specific Fitted Parameters"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:topright)
+             ylim=ylim_use, legend=:topright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1032,14 +1044,15 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
     plot!(p, [0, length(condition_labels)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
 
     # Add diagonal line (perfect prediction)
-    plot!(p, [0, length(condition_labels)+1], [0, 1], linestyle=:dot, color=:black, alpha=0.3, label="Perfect Prediction", linewidth=1)
+    plot!(p, [0, length(condition_labels)+1], [ylim_use[1], ylim_use[2]], linestyle=:dot, color=:black, alpha=0.3, label="Perfect Prediction", linewidth=1)
 
     # Set x-axis labels
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)
@@ -1177,9 +1190,10 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nSingle LBA Model - Condition-Specific Fitted Parameters"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:bottomright)
+             ylim=ylim_use, legend=:bottomright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1196,8 +1210,9 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)
@@ -1539,9 +1554,10 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nShared Parameters Across All Conditions"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:bottomright)
+             ylim=ylim_use, legend=:bottomright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1558,8 +1574,9 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)

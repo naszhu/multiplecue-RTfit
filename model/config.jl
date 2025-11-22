@@ -7,6 +7,7 @@ module Config
 
 export ModelConfig, SingleLBAParams, DualLBAParams, DataConfig, OptimizationConfig
 export get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config, get_weighting_mode
+export ACCURACY_YLIM
 
 """
     ModelConfig
@@ -59,6 +60,10 @@ end
 
 # Default weighting mode for reward transforms (either :exponential or :free)
 const DEFAULT_WEIGHTING_MODE = :free
+
+# Y-limits for accuracy plots (observed vs predicted)
+# Adjust here to change the vertical range of all accuracy figures
+const ACCURACY_YLIM = (0.5, 1.02)
 
 """
     get_weighting_mode()::Symbol
