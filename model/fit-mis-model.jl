@@ -24,10 +24,14 @@ using Pkg
 include("data_utils.jl")
 include("model_utils.jl")
 include("fitting_utils.jl")
+include("config.jl")
+include("run_flags.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
+using .Config
+using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 
 # ==========================================================================
 # CONFIGURATION
@@ -35,7 +39,7 @@ using .FittingUtils
 
 const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
 const FILE_PATTERN = "*.dat"
-const OUTPUT_CSV = "model_fit_results.csv"
+const OUTPUT_CSV = joinpath(@__DIR__, "outputdata", "model_fit_results.csv")
 const OUTPUT_PLOT = "model_fit_plot.png"
 
 # ==========================================================================
@@ -71,6 +75,8 @@ function run_analysis()
         n_trials = sum(data.CueCondition .== cc)
         println("  $i. CueCondition $cc: $n_trials trials")
     end
+
+    plot_config = get_plot_config()
 
     # Step 2: Set up optimization parameters
     println("\n" * "=" ^ 70)
@@ -115,9 +121,11 @@ function run_analysis()
         # Generate plot for this condition
         best_params = Optim.minimizer(result)
         plot_path = joinpath(images_dir, "model_fit_plot_condition_$(cue_cond).png")
-        generate_plot(condition_data, best_params, 
+        generate_plot(condition_data, best_params,
                       plot_path;
-                      cue_condition=cue_cond)
+                      cue_condition=cue_cond,
+                      config=plot_config,
+                      save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS)
     end
 
     # Step 4: Combine and save all results
@@ -127,6 +135,11 @@ function run_analysis()
 
     if !isempty(all_results)
         combined_results = vcat(all_results...)
+        output_dir = dirname(OUTPUT_CSV)
+        if !isdir(output_dir)
+            mkdir(output_dir)
+            println("Created outputdata directory: $output_dir")
+        end
         CSV.write(OUTPUT_CSV, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
@@ -139,7 +152,11 @@ function run_analysis()
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Combined results saved to: $OUTPUT_CSV")
-    println("Individual condition results and plots saved with condition-specific filenames")
+    if SAVE_INDIVIDUAL_CONDITION_PLOTS
+        println("Individual condition results and plots saved with condition-specific filenames")
+    else
+        println("Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
+    end
 end
 
 # ==========================================================================

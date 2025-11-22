@@ -20,18 +20,20 @@ include("data_utils.jl")
 include("model_utils.jl")
 include("fitting_utils.jl")
 include("config.jl")
+include("run_flags.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
 using .Config
+using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 
 # ==========================================================================
 # CONFIGURATION
 # ==========================================================================
 
 # ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
+const PARTICIPANT_ID = 1  # Options: 1, 2, or 3
 # ========================================================
 
 # ========== REWARD WEIGHTING MODE ==========
@@ -58,7 +60,7 @@ function run_analysis()
     println("Reward weighting mode: $weighting_mode")
 
     # Create configuration with plot display flags
-    plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
+    plot_config = get_plot_config()  # from RunFlags
 
     # Create images subfolder if it doesn't exist
     images_dir = joinpath(@__DIR__, "images")
@@ -234,7 +236,7 @@ function run_analysis()
 
     # Store individual plot objects and condition data
     individual_plots = []
-    condition_data_dict = Dict()
+    condition_data_dict = Dict{Any,DataFrame}()
 
     for (idx, cue_cond) in enumerate(cue_conditions)
         println("\n" * "-" ^ 70)
@@ -258,7 +260,7 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode)
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS)
         push!(individual_plots, p)
     end
 
@@ -308,7 +310,11 @@ function run_analysis()
     println("Model: Single LBA with SHARED parameters across ALL conditions")
     println("\nResults saved to:")
     println("  - Parameters: outputdata/model_fit_results_allconditions_P$(data_config.participant_id).csv")
-    println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*.png")
+    if SAVE_INDIVIDUAL_CONDITION_PLOTS
+        println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*.png")
+    else
+        println("  - Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
+    end
     println("  - Combined plot: images/model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
     println("  - Accuracy plot: images/accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
     println("\nNote: This model uses SHARED parameters (C, θ, A, k, t0) across all conditions,")

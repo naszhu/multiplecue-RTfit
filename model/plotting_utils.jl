@@ -19,7 +19,7 @@ export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_ove
 export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
 
 """
-    generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing)::Nothing
+    generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
 
     Generates a plot comparing observed RT distribution with model predictions.
     Shows the mixture components separately to visualize bimodality.
@@ -30,7 +30,7 @@ export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title
 """
-function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing)::Nothing
+function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot...")
 
     # Unpack parameters
@@ -191,8 +191,12 @@ function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::Str
     end
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Express probability: $(round(p_exp, digits=6))")
     println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
@@ -205,7 +209,7 @@ function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::Str
             println("  ⚠ WARNING: Express component may not create visible bimodality")
         end
     end
-    return nothing
+    return p
 end
 
 """
@@ -221,7 +225,7 @@ end
     - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot for dual-LBA model...")
 
     # Unpack parameters
@@ -426,8 +430,12 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     vline!(p, [max_lba2_rt], color=:green, linestyle=:dot, linewidth=1, alpha=0.5, label="")
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Mixing probability: $(round(p_mix, digits=4))")
     println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
@@ -450,7 +458,7 @@ end
     - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_single(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+function generate_plot_single(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot for single LBA model...")
 
     # Unpack parameters
@@ -595,8 +603,12 @@ function generate_plot_single(data::DataFrame, params, output_plot="model_fit_pl
     # Add vertical line at peak
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Non-decision time (t0): $(round(t0, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
@@ -1215,7 +1227,7 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential)
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
     # Unpack parameters based on weighting mode
@@ -1376,8 +1388,12 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
     # Add vertical line at peak
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Non-decision time (t0): $(round(t0, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
@@ -1386,7 +1402,7 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
 end
 
 """
-    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Nothing
+    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)
 
     Generates one overall accuracy plot showing all CueConditions together using SHARED parameters.
     Unlike the condition-specific versions, this uses the SAME parameters for all conditions.
@@ -1397,7 +1413,7 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Nothing
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     # Unpack SHARED parameters
@@ -1557,7 +1573,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
         println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
         println("  RMSE: $(round(rmse, digits=3))")
     end
-    return nothing
+    return p
 end
 
 end # module

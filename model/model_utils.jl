@@ -397,12 +397,12 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
             error("r_max should not smaller than 0")
             r_max = 1.0
         end
-    else
-        r_max = isnothing(r_max) ? 1.0 : r_max
+    else #free mode, r_max is not used
+        r_max = isnothing(r_max) ? 4.0 : r_max
     end
 
-    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0
-    weight_lookup = nothing
+    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0 #w_slope_normalized is only used for exponential mode
+    weight_lookup = nothing #weight_lookup is only used for free mode
     if weighting_mode == :free
         val_type = typeof(params[1])
         weight_lookup = Dict{Float64, val_type}(
