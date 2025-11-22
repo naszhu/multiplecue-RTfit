@@ -14,6 +14,10 @@ using SequentialSamplingModels
 using Statistics
 using Plots
 
+# Shared styling defaults for RT plots across all conditions
+const RT_ALLCONDITIONS_YLIM = (0.0, 10.5)
+const AXIS_FONT_SIZE = 12
+
 # Accuracy plot y-limits; pull from Config if available, otherwise fall back.
 # Kept as a helper to avoid hard-failing if Config was not imported first.
 const DEFAULT_ACCURACY_YLIM = (0.5, 1.0)
@@ -81,7 +85,9 @@ function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::Str
     p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5,
              color=:darkblue, linestyle=:solid, alpha=0.8,
              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-             legend=:topright, size=(800, 600))
+             legend=:topright, size=(800, 600),
+             ylims=RT_ALLCONDITIONS_YLIM,
+             guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE)
 
     # Simulate Model Curve
     # We calculate the unconditional PDF by averaging across all unique reward structures
@@ -276,7 +282,9 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5,
              color=:darkblue, linestyle=:solid, alpha=0.8,
              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-             legend=:topright, size=(800, 600))
+             legend=:topright, size=(800, 600),
+             ylim=RT_ALLCONDITIONS_YLIM,
+             guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE)
 
     # Compute unconditional PDF
     t_grid = range(0.05, 1.5, length=300)

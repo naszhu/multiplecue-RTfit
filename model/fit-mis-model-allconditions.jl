@@ -282,10 +282,11 @@ function run_analysis()
                             plot_title="All-Conditions Model (Shared Parameters) - Participant $(data_config.participant_id)",
                             plot_titlefontsize=18,
                             titlefontsize=14,
-                            legendfontsize=12,
-                            guidefontsize=14,
-                            tickfontsize=12,
-                            fontsize=12)
+                            legendfontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            guidefontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            tickfontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            fontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            ylims=FittingUtils.PlottingUtils.RT_ALLCONDITIONS_YLIM)
 
         # Save combined plot
         combined_plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
