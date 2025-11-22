@@ -6,7 +6,7 @@
 module Config
 
 export ModelConfig, SingleLBAParams, DualLBAParams, DataConfig, OptimizationConfig
-export get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config
+export get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config, get_weighting_mode
 
 """
     ModelConfig
@@ -57,16 +57,37 @@ struct DualLBAParams
     x0::Vector{Float64}
 end
 
+# Default weighting mode for reward transforms (either :exponential or :free)
+const DEFAULT_WEIGHTING_MODE = :free
+
+"""
+    get_weighting_mode()
+
+Returns the default weighting mode for reward-to-weight transform.
+Change `DEFAULT_WEIGHTING_MODE` to `:free` to estimate separate weights per reward value.
+"""
+get_weighting_mode() = DEFAULT_WEIGHTING_MODE
+
 """
     get_default_single_params()
 
 Returns default parameter bounds and initial values for single LBA model.
 Parameters: [C, w_slope, A, k, t0]
 """
-function get_default_single_params()
-    lower = [1.0,  0.0,   0.01, 0.05, 0.05]
-    upper = [30.0, 10.0,  1.0,  1.0,  0.6]
-    x0    = [10.0, 1.0,   0.2,  0.2,  0.25]
+function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)
+    if weighting_mode == :exponential
+        lower = [1.0,  0.0,   0.01, 0.05, 0.05]   # C, w_slope, A, k, t0
+        upper = [30.0, 10.0,  1.0,  1.0,  0.6]
+        x0    = [10.0, 1.0,   0.2,  0.2,  0.25]
+    elseif weighting_mode == :free
+        # Free weights: [C, w2, w3, w4, A, k, t0] with w1 fixed at 1.0 baseline
+        lower = [1.0,  1.0, 1.0, 1.0,   0.01, 0.05, 0.05]
+        upper = [30.0, 50.0, 50.0, 50.0, 1.0,  1.0,  0.6]
+        x0    = [10.0, 2.0,  5.0, 10.0, 0.2,  0.2,  0.25]
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free")
+    end
+
     return SingleLBAParams(lower, upper, x0)
 end
 

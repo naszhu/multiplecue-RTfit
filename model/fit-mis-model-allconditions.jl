@@ -34,6 +34,11 @@ using .Config
 const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
 # ========================================================
 
+# ========== REWARD WEIGHTING MODE ==========
+# Set to :exponential (original θ-based) or :free (fit w2, w3, w4 with w1 fixed at 1.0)
+const WEIGHTING_MODE_OVERRIDE = nothing  # leave as `nothing` to use Config.get_weighting_mode()
+# ===========================================
+
 const OUTPUT_CSV = "model_fit_results_allconditions.csv"
 const OUTPUT_PLOT = "model_fit_plot_allconditions.png"
 
@@ -49,6 +54,8 @@ function run_analysis()
     println("=" ^ 70)
     println("Selected Participant ID: $(data_config.participant_id)")
     println("Data path: $(data_config.data_base_path)")
+    weighting_mode = isnothing(WEIGHTING_MODE_OVERRIDE) ? get_weighting_mode() : WEIGHTING_MODE_OVERRIDE
+    println("Reward weighting mode: $weighting_mode")
 
     # Create configuration with plot display flags
     plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
@@ -116,16 +123,23 @@ function run_analysis()
     println("FITTING SINGLE LBA MODEL TO ALL CONDITIONS")
     println("=" ^ 70)
     println("Model type: Single LBA with SHARED parameters across all conditions")
-    println("Parameters to be fitted: C, θ (w_slope), A, k, t0")
+    if weighting_mode == :exponential
+        println("Parameters to be fitted: C, θ (w_slope), A, k, t0 (exponential weighting)")
+    else
+        println("Parameters to be fitted: C, w2, w3, w4, A, k, t0 (free weights, w1 fixed at 1.0)")
+    end
     println("Number of conditions: $(length(cue_conditions))")
     println("Total trials: $(nrow(data))")
     println("Using ULTRA-FAST preprocessed data structure")
 
     # Get parameter bounds and initial values from configuration
-    params_config = get_default_single_params()
+    params_config = get_default_single_params(weighting_mode)
     lower = params_config.lower
     upper = params_config.upper
     x0 = params_config.x0
+    param_names = weighting_mode == :exponential ?
+                  ["C", "w_slope", "A", "k", "t0"] :
+                  ["C", "w2", "w3", "w4", "A", "k", "t0"]
 
     println("\n" * "-" ^ 70)
     println("OPTIMIZATION SETUP")
@@ -140,8 +154,9 @@ function run_analysis()
     println("\n" * "-" ^ 70)
     println("RUNNING OPTIMIZATION")
     println("-" ^ 70)
-    result = fit_model(preprocessed_data, mis_lba_allconditions_loglike;
-                       lower=lower, upper=upper, x0=x0, time_limit=600.0, r_max=r_max)
+    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode)
+    result = fit_model(preprocessed_data, objective_func;
+                       lower=lower, upper=upper, x0=x0, time_limit=600.0)
 
     # Get the fitted parameters
     best_params = Optim.minimizer(result)
@@ -157,18 +172,32 @@ function run_analysis()
     end
 
     println("\n--- FIXED PARAMETERS (out of search) ---")
-    println("  r_max = $r_max  (experiment-wide maximum reward, used for MIS weight normalization)")
+    if weighting_mode == :exponential
+        println("  r_max = $r_max  (experiment-wide maximum reward, used for MIS weight normalization)")
+    else
+        println("  weighting_mode = :free  (w1 fixed at 1.0; r_max not used for weights)")
+    end
 
     println("\n--- PARAMETER DESCRIPTIONS ---")
     println("  C: Capacity parameter (drift rate scaling)")
-    println("  w_slope: Reward weight slope (θ in MIS theory: exp(θ * r / r_max))")
+    if weighting_mode == :exponential
+        println("  w_slope: Reward weight slope (θ in MIS theory: exp(θ * r / r_max))")
+    else
+        println("  w2/w3/w4: Free reward weights (w1 fixed at 1.0 baseline)")
+    end
     println("  A: Maximum start point variability in LBA")
     println("  k: Threshold gap in LBA (b - A, where b is decision threshold)")
     println("  t0: Non-decision time in LBA")
-    println("  r_max: Maximum reward value across entire experiment (fixed, not optimized)")
+    if weighting_mode == :exponential
+        println("  r_max: Maximum reward value across entire experiment (fixed, not optimized)")
+    end
 
     println("\n--- MIS THEORY PARAMETERS ---")
-    println("  Weight calculation: w_i = exp(w_slope * r_i / r_max)")
+    if weighting_mode == :exponential
+        println("  Weight calculation: w_i = exp(w_slope * r_i / r_max)")
+    else
+        println("  Weight calculation: w_i pulled from fitted [1.0, w2, w3, w4] lookup")
+    end
     println("  Relative weights: rel_w_i = w_i / Σw_j")
     println("  Drift rates: ν_i = C * rel_w_i")
 
@@ -195,7 +224,7 @@ function run_analysis()
 
     # Save overall results
     output_filename = "model_fit_results_allconditions_P$(data_config.participant_id).csv"
-    results_df = save_results_allconditions(result, output_filename)
+    results_df = save_results_allconditions(result, output_filename; param_names=param_names)
     println("\nFitted parameters:")
     println(results_df)
 
@@ -230,7 +259,7 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config)
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode)
         push!(individual_plots, p)
     end
 
@@ -270,7 +299,7 @@ function run_analysis()
         println("=" ^ 70)
 
         overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
-        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max)
+        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode)
     end
 
     println("\n" * "=" ^ 70)

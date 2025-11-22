@@ -364,40 +364,58 @@ end
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
-    # Unpack parameters
-    C, w_slope, A, k, t0 = params
-
-    # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
-        return Inf
+function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing, weighting_mode::Symbol=:exponential)
+    # Unpack parameters and constraints based on weighting_mode
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+        if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+            return Inf
+        end
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+        if C<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+            return Inf
+        end
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
     end
 
     total_neg_ll = 0.0
 
-    # Compute r_max: use provided value, or compute from dataset if not provided
-    if isnothing(r_max)
-        # Fallback: compute from current dataset (for backward compatibility)
-        r_max = 0.0
-        for rewards in df.ParsedRewards
-            if !isempty(rewards)
-                r_max = max(r_max, maximum(rewards))
-                @assert r_max == 4 "rmax calculated incorrectly"
+    # Compute r_max only for exponential mode
+    if weighting_mode == :exponential
+        if isnothing(r_max)
+            r_max = 0.0
+            for rewards in df.ParsedRewards
+                if !isempty(rewards)
+                    r_max = max(r_max, maximum(rewards))
+                    @assert r_max == 4 "rmax calculated incorrectly"
+                end
             end
         end
-    end
-    # Avoid division by zero if all rewards are 0
-    if r_max <= 0.0
-        error("r_max should not smaller than 0")
-        r_max = 1.0
+        if r_max <= 0.0
+            error("r_max should not smaller than 0")
+            r_max = 1.0
+        end
+    else
+        r_max = isnothing(r_max) ? 1.0 : r_max
     end
 
-    # Precompute constant factor to avoid repeated divisions
-    w_slope_normalized = w_slope / r_max
+    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0
+    weight_lookup = nothing
+    if weighting_mode == :free
+        val_type = typeof(params[1])
+        weight_lookup = Dict{Float64, val_type}(
+            1.0 => one(val_type),
+            2.0 => params[2],
+            3.0 => params[3],
+            4.0 => params[4],
+            0.0 => convert(val_type, 1e-10)
+        )
+    end
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
 
     # Cache for drift rates based on reward configurations
-    # Key: reward vector, Value: drift rates
-    # Use Any to support both Float64 and ForwardDiff.Dual types during autodiff
     drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
 
     # Accumulate log-likelihood across ALL trials from ALL conditions
@@ -408,23 +426,24 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
         key = Tuple(rewards)
 
         # --- MIS THEORY ---
-        # Check if we've already computed drift rates for this reward configuration
         if haskey(drift_cache, key)
             drift_rates = drift_cache[key]
         else
-            # Weight = exp(θ * r / r_max) as per paper
-            # Exponential weighting allows winner-take-all behavior
-            weights = exp.(w_slope_normalized .* rewards)
+            weights = weighting_mode == :exponential ?
+                      exp.(w_slope_normalized .* rewards) :
+                      [get(weight_lookup, r, default_weight) for r in rewards]
             rel_weights = weights ./ sum(weights)
-            drift_rates = C .* rel_weights
-            # Cache the result
+            drift_rates = params[1] .* rel_weights  # params[1] is C in both modes
             drift_cache[key] = drift_rates
         end
 
         # --- SINGLE LBA ---
-        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
+        A_use = weighting_mode == :exponential ? params[3] : params[5]
+        k_use = weighting_mode == :exponential ? params[4] : params[6]
+        t0_use = weighting_mode == :exponential ? params[5] : params[7]
+        lba = LBA(ν=drift_rates, A=A_use, k=k_use, τ=t0_use)
         lik = 0.0
-        if rt > t0
+        if rt > t0_use
             try
                 lik = pdf(lba, (choice=choice, rt=rt))
                 if isnan(lik) || isinf(lik) lik = 1e-10 end
@@ -449,32 +468,59 @@ Ultra-fast likelihood computation using preprocessed data (method overload).
 Computes drift rates only once per unique reward configuration.
 This version is 3-5x faster than the DataFrame version.
 """
-function mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r_max=nothing)
-    # Unpack parameters
-    C, w_slope, A, k, t0 = params
-
+function mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r_max=nothing, weighting_mode::Symbol=:exponential)
     # Constraints
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
-        return Inf
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+        if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+            return Inf
+        end
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+        if C<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+            return Inf
+        end
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
     end
 
-    # Use provided r_max or default to 4.0
-    if isnothing(r_max)
-        r_max = 4.0
+    # r_max is only used for exponential mode
+    if weighting_mode == :exponential
+        if isnothing(r_max)
+            r_max = 4.0
+        end
+    else
+        r_max = isnothing(r_max) ? 1.0 : r_max
     end
 
     total_neg_ll = 0.0
-    w_slope_normalized = w_slope / r_max
+    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0
+    weight_lookup = nothing
+    if weighting_mode == :free
+        val_type = typeof(params[1])
+        weight_lookup = Dict{Float64, val_type}(
+            1.0 => one(val_type),
+            2.0 => params[2],
+            3.0 => params[3],
+            4.0 => params[4],
+            0.0 => convert(val_type, 1e-10)
+        )
+    end
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
 
     # Process each unique reward configuration
     @inbounds for (rewards, trial_indices) in zip(preprocessed.unique_rewards, preprocessed.trial_groups)
-        # Compute drift rates once for this configuration
-        weights = exp.(w_slope_normalized .* rewards)
+        weights = weighting_mode == :exponential ?
+                  exp.(w_slope_normalized .* rewards) :
+                  [get(weight_lookup, r, default_weight) for r in rewards]
         rel_weights = weights ./ sum(weights)
-        drift_rates = C .* rel_weights
+        drift_rates = params[1] .* rel_weights  # params[1] is C in both modes
 
         # Create LBA once for this configuration
-        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
+        A_use = weighting_mode == :exponential ? params[3] : params[5]
+        k_use = weighting_mode == :exponential ? params[4] : params[6]
+        t0_use = weighting_mode == :exponential ? params[5] : params[7]
+        lba = LBA(ν=drift_rates, A=A_use, k=k_use, τ=t0_use)
 
         # Process all trials with this reward configuration
         for trial_idx in trial_indices
@@ -482,7 +528,7 @@ function mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r
             choice = preprocessed.choices[trial_idx]
 
             lik = 0.0
-            if rt > t0
+            if rt > t0_use
                 try
                     lik = pdf(lba, (choice=choice, rt=rt))
                     if isnan(lik) || isinf(lik) lik = 1e-10 end

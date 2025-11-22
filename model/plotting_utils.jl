@@ -1211,16 +1211,25 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+function generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, weighting_mode::Symbol=:exponential)
     println("Generating plot for all-conditions model (shared parameters)...")
 
-    # Unpack parameters
-    C, w_slope, A, k, t0 = params
+    # Unpack parameters based on weighting mode
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+    end
 
     # Create title
     title_str = "Single LBA Fit (Shared Parameters Across All Conditions)"
     if !isnothing(cue_condition)
-        title_str = "Cue Condition: $cue_condition\n(Shared: C=$(round(C, digits=2)), θ=$(round(w_slope, digits=2)), t0=$(round(t0, digits=3))s)"
+        weight_str = weighting_mode == :exponential ?
+                     "θ=$(round(w_slope, digits=2))" :
+                     "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
+        title_str = "Cue Condition: $cue_condition\n(Shared: C=$(round(C, digits=2)), $weight_str, t0=$(round(t0, digits=3))s)"
     end
 
     # Compute kernel density estimate (KDE) for observed data
@@ -1260,17 +1269,21 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
     y_pred_target = zeros(length(t_grid))
     y_pred_distractor = zeros(length(t_grid))
 
-    # Compute r_max: use provided value, or compute from dataset if not provided
-    if isnothing(r_max)
-        r_max = 0.0
-        for rewards in data.ParsedRewards
-            if !isempty(rewards)
-                r_max = max(r_max, maximum(rewards))
+    # Compute r_max if exponential weighting is used
+    if weighting_mode == :exponential
+        if isnothing(r_max)
+            r_max = 0.0
+            for rewards in data.ParsedRewards
+                if !isempty(rewards)
+                    r_max = max(r_max, maximum(rewards))
+                end
+            end
+            if r_max <= 0.0
+                r_max = 1.0
             end
         end
-        if r_max <= 0.0
-            r_max = 1.0
-        end
+    else
+        r_max = isnothing(r_max) ? 1.0 : r_max
     end
 
     # Get unique reward structures
@@ -1286,12 +1299,16 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
     end
 
     total_weight = 0.0
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
     for (key, rewards) in reward_arrays
         weight = reward_counts[key]
         total_weight += weight
 
-        # Reconstruct drift rates using exponential weight function with SHARED parameters
-        ws = exp.(w_slope .* rewards ./ r_max)
+        # Reconstruct drift rates using selected weighting function
+        ws = weighting_mode == :exponential ?
+             exp.(w_slope .* rewards ./ r_max) :
+             [get(weight_lookup, r, default_weight) for r in rewards]
         vs = C .* (ws ./ sum(ws))
 
         # Single LBA component with SHARED parameters
@@ -1376,11 +1393,17 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing, weighting_mode::Symbol=:exponential)
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     # Unpack SHARED parameters
-    C, w_slope, A, k, t0 = params
+    if weighting_mode == :exponential
+        C, w_slope, A, k, t0 = params
+    elseif weighting_mode == :free
+        C, w2, w3, w4, A, k, t0 = params
+    else
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+    end
 
     observed_acc = Float64[]
     predicted_acc = Float64[]
@@ -1391,26 +1414,34 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
     t_grid = range(0.05, 3.0, length=1000)
     dt = t_grid[2] - t_grid[1]
 
+    # Weight lookup for free mode (w1 fixed to 1.0)
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+
     # Sort conditions for consistent ordering
     sorted_conditions = sort(collect(keys(condition_data)))
 
     for cc in sorted_conditions
         condition_df = condition_data[cc]
 
-        # Compute r_max: use provided value, or compute from condition data if not provided
-        if isnothing(r_max)
-            r_max_cond = 0.0
-            for rewards in condition_df.ParsedRewards
-                if !isempty(rewards)
-                    r_max_cond = max(r_max_cond, maximum(rewards))
+        # Compute r_max only if exponential weighting is requested
+        if weighting_mode == :exponential
+            if isnothing(r_max)
+                r_max_cond = 0.0
+                for rewards in condition_df.ParsedRewards
+                    if !isempty(rewards)
+                        r_max_cond = max(r_max_cond, maximum(rewards))
+                    end
                 end
+                if r_max_cond <= 0.0
+                    r_max_cond = 1.0
+                end
+                r_max_use = r_max_cond
+            else
+                r_max_use = r_max
             end
-            if r_max_cond <= 0.0
-                r_max_cond = 1.0
-            end
-            r_max_use = r_max_cond
         else
-            r_max_use = r_max
+            r_max_use = isnothing(r_max) ? 1.0 : r_max
         end
 
         # Group by unique reward structures within this condition
@@ -1448,7 +1479,9 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
             total_trials += n_trials
 
             # Predicted accuracy for this reward structure using SHARED parameters
-            ws = exp.(w_slope .* rewards ./ r_max_use)
+            ws = weighting_mode == :exponential ?
+                 exp.(w_slope .* rewards ./ r_max_use) :
+                 [get(weight_lookup, r, default_weight) for r in rewards]
             vs = C .* (ws ./ sum(ws))
 
             lba = LBA(ν=vs, A=A, k=k, τ=t0)

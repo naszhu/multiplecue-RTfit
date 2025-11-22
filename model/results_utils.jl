@@ -133,13 +133,11 @@ end
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results_allconditions(result, output_csv="model_fit_results.csv")
+function save_results_allconditions(result, output_csv="model_fit_results.csv"; param_names=nothing)
     best = Optim.minimizer(result)
 
-    results_df = DataFrame(
-        Parameter = ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)"],
-        Value = best
-    )
+    names = isnothing(param_names) ? ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)"] : param_names
+    results_df = DataFrame(Parameter = names, Value = best[1:length(names)])
 
     # Add note that these are shared parameters
     results_df.Note = fill("Shared across all conditions", nrow(results_df))
