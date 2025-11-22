@@ -61,20 +61,20 @@ end
 const DEFAULT_WEIGHTING_MODE = :free
 
 """
-    get_weighting_mode()
+    get_weighting_mode()::Symbol
 
 Returns the default weighting mode for reward-to-weight transform.
 Change `DEFAULT_WEIGHTING_MODE` to `:free` to estimate separate weights per reward value.
 """
-get_weighting_mode() = DEFAULT_WEIGHTING_MODE
+get_weighting_mode()::Symbol = DEFAULT_WEIGHTING_MODE
 
 """
-    get_default_single_params()
+    get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)::SingleLBAParams
 
 Returns default parameter bounds and initial values for single LBA model.
 Parameters: [C, w_slope, A, k, t0]
 """
-function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)
+function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)::SingleLBAParams
     if weighting_mode == :exponential
         lower = [1.0,  0.0,   0.01, 0.05, 0.05]   # C, w_slope, A, k, t0
         upper = [30.0, 10.0,  1.0,  1.0,  0.6]
@@ -92,14 +92,14 @@ function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE
 end
 
 """
-    get_default_dual_params()
+    get_default_dual_params()::DualLBAParams
 
 Returns default parameter bounds and initial values for dual LBA mixture model.
 Parameters: [C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix]
 Component 1 (fast): lower thresholds, faster t0
 Component 2 (slow): higher thresholds, slower t0
 """
-function get_default_dual_params()
+function get_default_dual_params()::DualLBAParams
     lower = [1.0,  0.0,   0.01, 0.05, 0.05,  0.01, 0.05, 0.15,  0.0]
     upper = [30.0, 10.0,  1.0,  1.0,  0.4,   1.0,  1.0,  0.6,   0.99]
     x0    = [10.0, 1.0,   0.2,  0.2,  0.2,   0.3,  0.3,  0.35,  0.4]
@@ -133,7 +133,7 @@ function DataConfig(participant_id::Int;
 end
 
 """
-    get_data_config(participant_id::Int)
+    get_data_config(participant_id::Int)::DataConfig
 
 Returns data configuration for the specified participant.
 
@@ -143,7 +143,7 @@ Arguments:
 Returns:
 - DataConfig with paths and settings for the specified participant
 """
-function get_data_config(participant_id::Int)
+function get_data_config(participant_id::Int)::DataConfig
     if !(participant_id in [1, 2, 3])
         error("Invalid participant_id: $participant_id. Must be 1, 2, or 3.")
     end
@@ -182,14 +182,14 @@ struct OptimizationConfig
 end
 
 """
-    get_optimization_config()
+    get_optimization_config()::OptimizationConfig
 
 Returns default optimization configuration.
 
 Current settings are optimized for SPEED with acceptable precision.
 You can modify these values here to change optimization behavior globally.
 """
-function get_optimization_config()
+function get_optimization_config()::OptimizationConfig
     return OptimizationConfig(
         1e-2,      # g_tol: Very relaxed gradient tolerance for speed
         1e-3,      # f_reltol: Stop when improvement < 0.1%

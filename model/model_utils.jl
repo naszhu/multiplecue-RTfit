@@ -27,12 +27,12 @@ struct PreprocessedData
 end
 
 """
-    preprocess_data_for_fitting(df::DataFrame)
+    preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
 
 Preprocess data to group trials by unique reward configurations.
 This dramatically speeds up likelihood computation by computing drift rates only once per unique configuration.
 """
-function preprocess_data_for_fitting(df::DataFrame)
+function preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
     # Use tuple keys so identical reward sets hash by value, not object id
     reward_to_idx = Dict{Tuple{Vararg{Float64}}, Int}()
     unique_rewards = Vector{Vector{Float64}}()
@@ -63,7 +63,7 @@ function preprocess_data_for_fitting(df::DataFrame)
 end
 
 """
-    mis_lba_mixture_loglike(params, df::DataFrame)
+    mis_lba_mixture_loglike(params::Vector{Float64}, df::DataFrame)::Float64
 
     Computes the negative log-likelihood for the MIS-LBA mixture model.
 
@@ -79,7 +79,7 @@ end
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_mixture_loglike(params, df::DataFrame)
+function mis_lba_mixture_loglike(params::Vector{<:Real}, df::DataFrame)::Float64
     # Unpack parameters
     C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
 
@@ -136,7 +136,7 @@ function mis_lba_mixture_loglike(params, df::DataFrame)
 end
 
 """
-    mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
+    mis_lba_dual_mixture_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing)::Float64
 
     Computes the negative log-likelihood for a dual-LBA mixture model.
     This model uses TWO LBA components with different parameters to capture
@@ -157,7 +157,7 @@ end
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
+function mis_lba_dual_mixture_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing)::Float64
     # Unpack parameters
     C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
@@ -252,7 +252,7 @@ function mis_lba_dual_mixture_loglike(params, df::DataFrame; r_max=nothing)
 end
 
 """
-    mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
+    mis_lba_single_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing)::Float64
 
     Computes the negative log-likelihood for a single LBA model (no mixture).
     This model uses ONE LBA component to fit the entire RT distribution.
@@ -268,7 +268,7 @@ end
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
+function mis_lba_single_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing)::Float64
     # Unpack parameters
     C, w_slope, A, k, t0 = params
 
@@ -345,7 +345,7 @@ function mis_lba_single_loglike(params, df::DataFrame; r_max=nothing)
 end
 
 """
-    mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing)
+    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
 
     Computes the negative log-likelihood for a single LBA model fitted to ALL conditions at once.
     Uses SHARED parameters across all conditions (single C, theta, and LBA parameters).
@@ -364,7 +364,7 @@ end
 
     Returns negative log-likelihood (to be minimized).
 """
-function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing, weighting_mode::Symbol=:exponential)
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
     # Unpack parameters and constraints based on weighting_mode
     if weighting_mode == :exponential
         C, w_slope, A, k, t0 = params
@@ -462,13 +462,13 @@ function mis_lba_allconditions_loglike(params, df::DataFrame; r_max=nothing, wei
 end
 
 """
-    mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r_max=nothing)
+    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
 
 Ultra-fast likelihood computation using preprocessed data (method overload).
 Computes drift rates only once per unique reward configuration.
 This version is 3-5x faster than the DataFrame version.
 """
-function mis_lba_allconditions_loglike(params, preprocessed::PreprocessedData; r_max=nothing, weighting_mode::Symbol=:exponential)
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
     # Constraints
     if weighting_mode == :exponential
         C, w_slope, A, k, t0 = params

@@ -12,7 +12,7 @@ using Optim
 export save_results, save_results_dual, save_results_single, save_results_allconditions
 
 """
-    save_results(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+    save_results(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
 
     Saves the optimization results to a CSV file.
 
@@ -23,7 +23,7 @@ export save_results, save_results_dual, save_results_single, save_results_allcon
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+function save_results(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
     best = Optim.minimizer(result)
 
     results_df = DataFrame(
@@ -44,7 +44,7 @@ function save_results(result, output_csv="model_fit_results.csv"; cue_condition=
 end
 
 """
-    save_results_dual(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+    save_results_dual(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
 
     Saves the optimization results for dual-LBA model to a CSV file.
 
@@ -55,7 +55,7 @@ end
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+function save_results_dual(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
     best = Optim.minimizer(result)
 
     results_df = DataFrame(
@@ -84,7 +84,7 @@ function save_results_dual(result, output_csv="model_fit_results.csv"; cue_condi
 end
 
 """
-    save_results_single(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+    save_results_single(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
 
     Saves the optimization results for single-LBA model to a CSV file.
 
@@ -95,7 +95,7 @@ end
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results_single(result, output_csv="model_fit_results.csv"; cue_condition=nothing)
+function save_results_single(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
     best = Optim.minimizer(result)
 
     results_df = DataFrame(
@@ -123,7 +123,7 @@ function save_results_single(result, output_csv="model_fit_results.csv"; cue_con
 end
 
 """
-    save_results_allconditions(result, output_csv="model_fit_results.csv")
+    save_results_allconditions(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; param_names::Union{Nothing,Vector{String}}=nothing)::DataFrame
 
     Saves the optimization results for all-conditions model (shared parameters) to a CSV file.
 
@@ -133,7 +133,7 @@ end
 
     Returns parameter names and values as a DataFrame.
 """
-function save_results_allconditions(result, output_csv="model_fit_results.csv"; param_names=nothing)
+function save_results_allconditions(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; param_names::Union{Nothing,Vector{String}}=nothing)::DataFrame
     best = Optim.minimizer(result)
 
     names = isnothing(param_names) ? ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)"] : param_names

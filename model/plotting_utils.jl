@@ -5,6 +5,9 @@
 
 module PlottingUtils
 
+# Force GR into headless mode so plots can be generated without a display
+ENV["GKSwstype"] = "100"
+
 using DataFrames
 using Distributions
 using SequentialSamplingModels
@@ -16,7 +19,7 @@ export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_ove
 export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
 
 """
-    generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+    generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing)::Nothing
 
     Generates a plot comparing observed RT distribution with model predictions.
     Shows the mixture components separately to visualize bimodality.
@@ -27,7 +30,7 @@ export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title
 """
-function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing)::Nothing
     println("Generating plot...")
 
     # Unpack parameters
@@ -202,6 +205,7 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
             println("  ⚠ WARNING: Express component may not create visible bimodality")
         end
     end
+    return nothing
 end
 
 """
@@ -1198,7 +1202,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 end
 
 """
-    generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+    generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential)
 
     Generates a plot for single LBA model fitted to ALL conditions with SHARED parameters.
     This version shows the fit to RT distribution for a specific condition using the shared parameters.
@@ -1211,7 +1215,7 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, weighting_mode::Symbol=:exponential)
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential)
     println("Generating plot for all-conditions model (shared parameters)...")
 
     # Unpack parameters based on weighting mode
@@ -1382,7 +1386,7 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
 end
 
 """
-    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
+    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Nothing
 
     Generates one overall accuracy plot showing all CueConditions together using SHARED parameters.
     Unlike the condition-specific versions, this uses the SAME parameters for all conditions.
@@ -1393,7 +1397,7 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing, weighting_mode::Symbol=:exponential)
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Nothing
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     # Unpack SHARED parameters
@@ -1553,6 +1557,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
         println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
         println("  RMSE: $(round(rmse, digits=3))")
     end
+    return nothing
 end
 
 end # module
