@@ -9,15 +9,35 @@ This directory contains code for fitting a mixture model that combines:
 
 ### Main Scripts
 
-- **`fit-mis-model-modular.jl`** - Modular version (recommended)
-  - Clean, organized code with separate modules
-  - Easy to maintain and extend
-  - Better for understanding the code structure
+The following scripts represent the evolution of the model fitting approach, each addressing different modeling assumptions:
 
-- **`fit-mis-model.jl`** - Original monolithic version
-  - All code in one file
-  - Useful if you need everything in one place
-  - Contains all the same bug fixes
+- **`fit-mis-model.jl`** - Original model (LBA with express response component)
+  - Attempts to fit LBA assuming a fast cascade at the beginning
+  - Uses LBA + express response component for fast guesses
+  - **Note**: This approach didn't work well in practice
+
+- **`fit-mis-model-dual.jl`** - Dual mixture LBA model
+  - Uses **two LBA components** with different parameters to capture bimodality
+  - More relaxed assumptions than the original approach
+  - Assumes bimodality comes from two different decision processes:
+    - LBA Component 1: Fast mode (lower thresholds, faster non-decision time)
+    - LBA Component 2: Slow mode (higher thresholds, slower non-decision time)
+  - More appropriate when bimodality is within the normal LBA range rather than from express responses
+
+- **`fit-mis-model-single.jl`** - Single LBA model (no mixture)
+  - Fits **only one LBA component** (no mixture components)
+  - Assumes a single decision process with reward-based attentional weights
+  - No bimodality modeling
+  - Simpler model for cases where a single decision process is sufficient
+
+- **`fit-mis-model-allconditions.jl`** - All-conditions model with shared parameters
+  - Fits **all conditions with the same set of parameters** (shared across conditions)
+  - Unlike condition-specific models, uses:
+    - Single C (capacity) parameter for all conditions
+    - Single θ (theta/w_slope) parameter for all conditions
+    - Single set of LBA parameters (A, k, t0) for all conditions
+  - Still generates separate prediction outputs for each cue condition for visualization
+  - Useful for testing whether parameters generalize across conditions
 
 ### Module Files
 
@@ -45,15 +65,23 @@ This directory contains code for fitting a mixture model that combines:
 
 ### Running the Analysis
 
-```bash
-julia fit-mis-model-modular.jl
-```
-
-Or use the original version:
+Choose the appropriate script based on your modeling needs:
 
 ```bash
+# Original model (LBA + express response - didn't work well)
 julia fit-mis-model.jl
+
+# Dual mixture LBA (two LBA components with relaxed assumptions)
+julia fit-mis-model-dual.jl
+
+# Single LBA (no mixture, simpler model)
+julia fit-mis-model-single.jl
+
+# All conditions with shared parameters
+julia fit-mis-model-allconditions.jl
 ```
+
+**Note**: For `fit-mis-model-dual.jl`, `fit-mis-model-single.jl`, and `fit-mis-model-allconditions.jl`, you need to set the `PARTICIPANT_ID` constant at the top of each script (options: 1, 2, or 3).
 
 ### Configuration
 
@@ -83,8 +111,23 @@ Default bounds and initial values are set in the main script.
 
 ## Output Files
 
-- **`model_fit_results.csv`** - Fitted parameter values
-- **`model_fit_plot.png`** - Visualization comparing observed vs predicted RT distributions
+Each script generates its own output files:
+
+- **`fit-mis-model.jl`**:
+  - `model_fit_results.csv` - Fitted parameter values
+  - `model_fit_plot.png` - Visualization comparing observed vs predicted RT distributions
+
+- **`fit-mis-model-dual.jl`**:
+  - `model_fit_results_dual.csv` - Fitted parameter values
+  - `model_fit_plot_dual.png` - Visualization
+
+- **`fit-mis-model-single.jl`**:
+  - `model_fit_results_single.csv` - Fitted parameter values
+  - `model_fit_plot_single.png` - Visualization
+
+- **`fit-mis-model-allconditions.jl`**:
+  - `model_fit_results_allconditions.csv` - Fitted parameter values
+  - `model_fit_plot_allconditions.png` - Visualization
 
 ## Data Format
 
@@ -173,3 +216,4 @@ Edit `fitting_utils.jl` and modify `fit_model()`:
 ## Contact
 
 For questions about the code structure or bugs, refer to the git commit history or contact the maintainer.
+
