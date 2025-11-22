@@ -121,7 +121,7 @@ function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::Str
         for (j, t) in enumerate(t_grid)
             # LBA component
             lba_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     # Sum pdf of all possible choices
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
@@ -210,7 +210,7 @@ function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::Str
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Express probability: $(round(p_exp, digits=6))")
     println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     if p_exp > 1e-6
         println("  Express-LBA separation: $(round(separation*1000, digits=0))ms")
         println("  Express peak density: $(round(max_exp_dens, digits=4))")
@@ -566,7 +566,7 @@ function generate_plot_single(data::DataFrame, params, output_plot="model_fit_pl
             lba_dens = 0.0
             lba_target_dens = 0.0
             lba_distractor_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
                     lba_target_dens = pdf(lba, (choice=target_choice, rt=t))
@@ -622,7 +622,7 @@ function generate_plot_single(data::DataFrame, params, output_plot="model_fit_pl
         println("Skipped saving individual plot (save_plot=false)")
     end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
 
     return p
@@ -1165,7 +1165,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
             pred_prob = 0.0
 
             for t in t_grid
-                if t > t0
+                if t > t0_use
                     try
                         prob = pdf(lba, (choice=target_choice, rt=t))
                         if !isnan(prob) && !isinf(prob) && prob > 0
@@ -1246,17 +1246,36 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true)::Plots.Plot
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_type::Symbol=:single)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
     # Unpack parameters based on weighting mode
+    p_idx = 1
+    C_single = params[p_idx]; p_idx += 1
+    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+    p_idx += vary_C_by_cue_type ? 1 : 0
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
     if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
+        w_slope = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
     elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
+        w2 = params[p_idx]; p_idx += 1
+        w3 = params[p_idx]; p_idx += 1
+        w4 = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
     else
         error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
     end
+    @assert cue_condition_type in (:single, :double) "cue_condition_type must be :single or :double"
+    C_use = cue_condition_type == :double ? C_double : C_single
+    t0_use = cue_condition_type == :double ? t0_double : t0_single
 
     # Create title
     title_str = "Single LBA Fit (Shared Parameters Across All Conditions)"
@@ -1264,7 +1283,8 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         weight_str = weighting_mode == :exponential ?
                      "θ=$(round(w_slope, digits=2))" :
                      "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
-        title_str = "Cue Condition: $cue_condition\n(Shared: C=$(round(C, digits=2)), $weight_str, t0=$(round(t0, digits=3))s)"
+        c_label = cue_condition_type == :double ? "double-cue" : "single-cue"
+        title_str = "Cue Condition: $cue_condition ($c_label)\n(Shared: C=$(round(C_use, digits=2)), $weight_str, t0=$(round(t0_use, digits=3))s)"
     end
 
     # Compute kernel density estimate (KDE) for observed data
@@ -1344,10 +1364,10 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         ws = weighting_mode == :exponential ?
              exp.(w_slope .* rewards ./ r_max) :
              [get(weight_lookup, r, default_weight) for r in rewards]
-        vs = C .* (ws ./ sum(ws))
+        vs = C_use .* (ws ./ sum(ws))
 
         # Single LBA component with SHARED parameters
-        lba = LBA(ν=vs, A=A, k=k, τ=t0)
+        lba = LBA(ν=vs, A=A, k=k, τ=t0_use)
 
         # Identify target choice (highest reward option)
         target_choice = argmax(rewards)
@@ -1358,7 +1378,7 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
             lba_dens = 0.0
             lba_target_dens = 0.0
             lba_distractor_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
                     lba_target_dens = pdf(lba, (choice=target_choice, rt=t))
@@ -1414,14 +1434,14 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         println("Skipped saving individual plot (save_plot=false)")
     end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
 
     return p
 end
 
 """
-    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)
+    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single)
 
     Generates one overall accuracy plot showing all CueConditions together using SHARED parameters.
     Unlike the condition-specific versions, this uses the SAME parameters for all conditions.
@@ -1432,14 +1452,30 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Plots.Plot
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     # Unpack SHARED parameters
+    p_idx = 1
+    C_single = params[p_idx]; p_idx += 1
+    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+    p_idx += vary_C_by_cue_type ? 1 : 0
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
     if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
+        w_slope = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
     elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
+        w2 = params[p_idx]; p_idx += 1
+        w3 = params[p_idx]; p_idx += 1
+        w4 = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
     else
         error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
     end
@@ -1462,6 +1498,10 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
 
     for cc in sorted_conditions
         condition_df = condition_data[cc]
+        cond_type = cue_condition_type_fn(cc)
+        @assert cond_type in (:single, :double) "cue_condition_type_fn must return :single or :double"
+        C_use = cond_type == :double ? C_double : C_single
+        t0_use = cond_type == :double ? t0_double : t0_single
 
         # Compute r_max only if exponential weighting is requested
         if weighting_mode == :exponential
@@ -1521,15 +1561,15 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
             ws = weighting_mode == :exponential ?
                  exp.(w_slope .* rewards ./ r_max_use) :
                  [get(weight_lookup, r, default_weight) for r in rewards]
-            vs = C .* (ws ./ sum(ws))
+            vs = C_use .* (ws ./ sum(ws))
 
-            lba = LBA(ν=vs, A=A, k=k, τ=t0)
+            lba = LBA(ν=vs, A=A, k=k, τ=t0_use)
 
             # Compute choice probability
             pred_prob = 0.0
 
             for t in t_grid
-                if t > t0
+                if t > t0_use
                     try
                         prob = pdf(lba, (choice=target_choice, rt=t))
                         if !isnan(prob) && !isinf(prob) && prob > 0

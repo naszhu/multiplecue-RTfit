@@ -139,8 +139,8 @@ function save_results_allconditions(result::Optim.MultivariateOptimizationResult
     names = isnothing(param_names) ? ["Capacity(C)", "RewardSlope(w)", "StartVar(A)", "ThreshGap(k)", "NonDec(t0)"] : param_names
     results_df = DataFrame(Parameter = names, Value = best[1:length(names)])
 
-    # Add note that these are shared parameters
-    results_df.Note = fill("Shared across all conditions", nrow(results_df))
+    # Add note for clarity (covers cue-specific extensions)
+    results_df.Note = fill("Shared across all conditions unless parameter name specifies cue-type split", nrow(results_df))
 
     # Create outputdata subfolder if it doesn't exist
     outputdata_dir = joinpath(@__DIR__, "outputdata")

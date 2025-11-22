@@ -20,7 +20,8 @@ Groups trials by unique reward configurations to eliminate redundant computation
 """
 struct PreprocessedData
     unique_rewards::Vector{Vector{Float64}}
-    trial_groups::Vector{Vector{Int}}  # Indices of trials for each unique reward config
+    trial_groups::Vector{Vector{Int}}  # Indices of trials for each unique reward/condition config
+    group_condition_types::Vector{Symbol}  # :single, :double, :all, or :mixed (if grouping not requested)
     rts::Vector{Float64}
     choices::Vector{Int}
     n_trials::Int
@@ -32,20 +33,35 @@ end
 Preprocess data to group trials by unique reward configurations.
 This dramatically speeds up likelihood computation by computing drift rates only once per unique configuration.
 """
-function preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
-    # Use tuple keys so identical reward sets hash by value, not object id
-    reward_to_idx = Dict{Tuple{Vararg{Float64}}, Int}()
+function preprocess_data_for_fitting(df::DataFrame; cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, group_by_condition::Bool=false)::PreprocessedData
+    # Use flexible keys so identical reward sets hash by value (and cue-type when requested)
+    reward_to_idx = Dict{Any, Int}()
     unique_rewards = Vector{Vector{Float64}}()
     trial_groups = Vector{Vector{Int}}()
+    group_condition_types = Symbol[]
+
+    cue_condition_types_use = cue_condition_types
+    if group_by_condition && isnothing(cue_condition_types_use)
+        error("cue_condition_types must be provided when group_by_condition=true")
+    end
+    if isnothing(cue_condition_types_use)
+        cue_condition_types_use = fill(:all, nrow(df))
+    end
+    @assert length(cue_condition_types_use) == nrow(df) "cue_condition_types length must match number of rows"
 
     for (trial_idx, rewards) in enumerate(df.ParsedRewards)
-        key = Tuple(rewards)
+        cond_type = cue_condition_types_use[trial_idx]
+        key = group_by_condition ? (cond_type, Tuple(rewards)) : Tuple(rewards)
         group_idx = get(reward_to_idx, key, 0)
         if group_idx == 0
             push!(unique_rewards, rewards)
             push!(trial_groups, Int[])
+            push!(group_condition_types, cond_type)
             group_idx = length(unique_rewards)
             reward_to_idx[key] = group_idx
+        elseif group_condition_types[group_idx] != cond_type
+            # Mark mixed groups so downstream code can assert if grouping was forgotten
+            group_condition_types[group_idx] = :mixed
         end
         push!(trial_groups[group_idx], trial_idx)
     end
@@ -59,7 +75,7 @@ function preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
     println("Preprocessed data: $(n_unique) unique reward configurations across $(nrow(df)) trials")
     println("Cache efficiency: $(round((1 - n_unique/nrow(df)) * 100, digits=1))%")
 
-    return PreprocessedData(unique_rewards, trial_groups, rts, choices, nrow(df))
+    return PreprocessedData(unique_rewards, trial_groups, group_condition_types, rts, choices, nrow(df))
 end
 
 """
@@ -189,8 +205,8 @@ function mis_lba_dual_mixture_loglike(params::Vector{<:Real}, df::DataFrame; r_m
     # Precompute constant factor to avoid repeated divisions
     w_slope_normalized = w_slope / r_max
 
-    # Cache for drift rates based on reward configurations
-    drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
+    # Cache for drift rates based on reward configurations (and cue type if needed)
+    drift_cache = Dict{Any, Any}()
 
     # Accumulate log-likelihood across all trials
     for i in 1:nrow(df)
@@ -345,35 +361,66 @@ function mis_lba_single_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Un
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
 
     Computes the negative log-likelihood for a single LBA model fitted to ALL conditions at once.
-    Uses SHARED parameters across all conditions (single C, theta, and LBA parameters).
-
-    This is different from mis_lba_single_loglike which is designed for a single condition.
-    This function fits all data together with one set of parameters.
-
-    Parameters:
-    - C: Capacity parameter (drift rate scaling) - SHARED across all conditions
-    - w_slope: Reward weight slope (θ) - SHARED across all conditions
-    - A: Maximum start point variability - SHARED across all conditions
-    - k: Threshold gap (b - A) - SHARED across all conditions
-    - t0: Non-decision time - SHARED across all conditions
-    - r_max: Optional maximum reward value across entire experiment.
-             If not provided, computed from df (for backward compatibility).
-
-    Returns negative log-likelihood (to be minimized).
+    Allows optional variation of C and/or t0 by single vs double cue conditions.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
+    # Derive cue-condition types if needed
+    cond_types = nothing
+    if vary_C_by_cue_type || vary_t0_by_cue_type
+        if isnothing(cue_condition_types)
+            if !("CueCondition" in names(df))
+                error("CueCondition column required to vary parameters by cue condition.")
+            end
+            single_set = Set([1, 2, 3, 4])
+            double_set = Set([5, 6, 7, 8, 9, 10])
+            cond_types = Vector{Symbol}(undef, nrow(df))
+            for (i, cc) in enumerate(df.CueCondition)
+                @assert !ismissing(cc) "CueCondition cannot be missing when varying by cue type."
+                if cc in single_set
+                    cond_types[i] = :single
+                elseif cc in double_set
+                    cond_types[i] = :double
+                else
+                    error("Unexpected CueCondition value $cc. Expected 1-10.")
+                end
+            end
+        else
+            cond_types = cue_condition_types
+            @assert length(cond_types) == nrow(df) "cue_condition_types length must match number of rows"
+            @assert all(ct -> ct in (:single, :double), cond_types) "cue_condition_types must be :single or :double"
+        end
+    end
+
     # Unpack parameters and constraints based on weighting_mode
+    p_idx = 1
+    C_single = params[p_idx]; p_idx += 1
+    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+    p_idx += vary_C_by_cue_type ? 1 : 0
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
     if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
-        if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+        w_slope = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
             return Inf
         end
     elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
-        if C<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+        w2 = params[p_idx]; p_idx += 1
+        w3 = params[p_idx]; p_idx += 1
+        w4 = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
             return Inf
         end
     else
@@ -401,15 +448,15 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
         r_max = isnothing(r_max) ? 4.0 : r_max
     end
 
-    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0 #w_slope_normalized is only used for exponential mode
+    w_slope_normalized = weighting_mode == :exponential ? (w_slope / r_max) : 0.0 # only used for exponential mode
     weight_lookup = nothing #weight_lookup is only used for free mode
     if weighting_mode == :free
-        val_type = typeof(params[1])
+        val_type = typeof(C_single)
         weight_lookup = Dict{Float64, val_type}(
             1.0 => one(val_type),
-            2.0 => params[2],
-            3.0 => params[3],
-            4.0 => params[4],
+            2.0 => w2,
+            3.0 => w3,
+            4.0 => w4,
             0.0 => convert(val_type, 1e-10)
         )
     end
@@ -423,7 +470,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
         rt = df.CleanRT[i]
         choice = df.Choice[i]
         rewards = df.ParsedRewards[i]
-        key = Tuple(rewards)
+        cond_type = isnothing(cond_types) ? :single : cond_types[i]
+        key = vary_C_by_cue_type ? (cond_type, Tuple(rewards)) : Tuple(rewards)
 
         # --- MIS THEORY ---
         if haskey(drift_cache, key)
@@ -433,15 +481,14 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
                       exp.(w_slope_normalized .* rewards) :
                       [get(weight_lookup, r, default_weight) for r in rewards]
             rel_weights = weights ./ sum(weights)
-            drift_rates = params[1] .* rel_weights  # params[1] is C in both modes
+            C_use = cond_type == :double ? C_double : C_single
+            drift_rates = C_use .* rel_weights
             drift_cache[key] = drift_rates
         end
 
         # --- SINGLE LBA ---
-        A_use = weighting_mode == :exponential ? params[3] : params[5]
-        k_use = weighting_mode == :exponential ? params[4] : params[6]
-        t0_use = weighting_mode == :exponential ? params[5] : params[7]
-        lba = LBA(ν=drift_rates, A=A_use, k=k_use, τ=t0_use)
+        t0_use = cond_type == :double ? t0_double : t0_single
+        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0_use)
         lik = 0.0
         if rt > t0_use
             try
@@ -462,22 +509,36 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false)::Float64
 
 Ultra-fast likelihood computation using preprocessed data (method overload).
 Computes drift rates only once per unique reward configuration.
 This version is 3-5x faster than the DataFrame version.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential)::Float64
-    # Constraints
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false)::Float64
+    # Unpack parameters and constraints based on weighting_mode
+    p_idx = 1
+    C_single = params[p_idx]; p_idx += 1
+    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+    p_idx += vary_C_by_cue_type ? 1 : 0
     if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
-        if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+        w_slope = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
             return Inf
         end
     elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
-        if C<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+        w2 = params[p_idx]; p_idx += 1
+        w3 = params[p_idx]; p_idx += 1
+        w4 = params[p_idx]; p_idx += 1
+        A = params[p_idx]; p_idx += 1
+        k = params[p_idx]; p_idx += 1
+        t0_single = params[p_idx]; p_idx += 1
+        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
             return Inf
         end
     else
@@ -494,33 +555,39 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
     end
 
     total_neg_ll = 0.0
-    w_slope_normalized = weighting_mode == :exponential ? (params[2] / r_max) : 0.0
+    w_slope_normalized = weighting_mode == :exponential ? (w_slope / r_max) : 0.0
     weight_lookup = nothing
     if weighting_mode == :free
-        val_type = typeof(params[1])
+        val_type = typeof(C_single)
         weight_lookup = Dict{Float64, val_type}(
             1.0 => one(val_type),
-            2.0 => params[2],
-            3.0 => params[3],
-            4.0 => params[4],
+            2.0 => w2,
+            3.0 => w3,
+            4.0 => w4,
             0.0 => convert(val_type, 1e-10)
         )
     end
     default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
 
-    # Process each unique reward configuration
-    @inbounds for (rewards, trial_indices) in zip(preprocessed.unique_rewards, preprocessed.trial_groups)
+    # Process each unique reward/condition configuration
+    @inbounds for (idx, rewards) in enumerate(preprocessed.unique_rewards)
+        trial_indices = preprocessed.trial_groups[idx]
+        cond_type = preprocessed.group_condition_types[idx]
+        if (vary_C_by_cue_type || vary_t0_by_cue_type) && cond_type in (:all, :mixed)
+            error("Preprocessed data missing cue-condition grouping. Call preprocess_data_for_fitting with group_by_condition=true.")
+        end
+        cond_type_use = cond_type == :all ? :single : cond_type
+
         weights = weighting_mode == :exponential ?
                   exp.(w_slope_normalized .* rewards) :
                   [get(weight_lookup, r, default_weight) for r in rewards]
         rel_weights = weights ./ sum(weights)
-        drift_rates = params[1] .* rel_weights  # params[1] is C in both modes
+        C_use = cond_type_use == :double ? C_double : C_single
+        drift_rates = C_use .* rel_weights
 
         # Create LBA once for this configuration
-        A_use = weighting_mode == :exponential ? params[3] : params[5]
-        k_use = weighting_mode == :exponential ? params[4] : params[6]
-        t0_use = weighting_mode == :exponential ? params[5] : params[7]
-        lba = LBA(ν=drift_rates, A=A_use, k=k_use, τ=t0_use)
+        t0_use = cond_type_use == :double ? t0_double : t0_single
+        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0_use)
 
         # Process all trials with this reward configuration
         for trial_idx in trial_indices

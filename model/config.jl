@@ -15,6 +15,8 @@ export OUTPUT_CSV_MIXTURE, OUTPUT_PLOT_MIXTURE
 export PARTICIPANT_ID_SINGLE, OUTPUT_CSV_SINGLE, OUTPUT_PLOT_SINGLE
 export PARTICIPANT_ID_DUAL, OUTPUT_CSV_DUAL, OUTPUT_PLOT_DUAL
 export PARTICIPANT_ID_ALLCONDITIONS, WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS, OUTPUT_CSV_ALLCONDITIONS, OUTPUT_PLOT_ALLCONDITIONS
+export CUE_CONDITION_SETUP, SINGLE_CUE_CONDITIONS, DOUBLE_CUE_CONDITIONS, cue_condition_type
+export VARY_C_BY_CUECOUNT_ALLCONDITIONS, VARY_T0_BY_CUECOUNT_ALLCONDITIONS
 
 """
     ModelConfig
@@ -84,6 +86,10 @@ end
 # Default weighting mode for reward transforms (either :exponential or :free)
 const DEFAULT_WEIGHTING_MODE = :free
 
+# Allow C/t0 to vary by cue-count (single vs double cue) in all-conditions run
+const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
+const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = true
+
 # Y-limits for accuracy plots (observed vs predicted)
 # Adjust here to change the vertical range of all accuracy figures
 const ACCURACY_YLIM = (0.5, 1.02)
@@ -113,10 +119,42 @@ const OUTPUT_CSV_DUAL = joinpath(@__DIR__, "outputdata", "model_fit_results_dual
 const OUTPUT_PLOT_DUAL = "model_fit_plot_dual.png"
 
 # All-conditions (fit-mis-model-allconditions.jl)
-const PARTICIPANT_ID_ALLCONDITIONS = 1  # Options: 1, 2, or 3
+const PARTICIPANT_ID_ALLCONDITIONS = 3  # Options: 1, 2, or 3
 const WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS = nothing  # leave as `nothing` to use DEFAULT_WEIGHTING_MODE
 const OUTPUT_CSV_ALLCONDITIONS = "model_fit_results_allconditions.csv"
 const OUTPUT_PLOT_ALLCONDITIONS = "model_fit_plot_allconditions.png"
+
+# Cue condition setup for experiment (1..10):
+# (1), (2), (3), (4), (2,1), (3,1), (4,1), (3,2), (4,2), (4,3)
+const CUE_CONDITION_SETUP = Dict(
+    1 => [1],
+    2 => [2],
+    3 => [3],
+    4 => [4],
+    5 => [2, 1],
+    6 => [3, 1],
+    7 => [4, 1],
+    8 => [3, 2],
+    9 => [4, 2],
+    10 => [4, 3],
+)
+
+const SINGLE_CUE_CONDITIONS = Set([1, 2, 3, 4])
+const DOUBLE_CUE_CONDITIONS = Set([5, 6, 7, 8, 9, 10])
+
+"""
+    cue_condition_type(cue_condition)::Symbol
+
+Returns :single or :double based on the configured cue condition setup.
+"""
+function cue_condition_type(cue_condition)::Symbol
+    if !haskey(CUE_CONDITION_SETUP, cue_condition)
+        error("Unknown cue condition: $cue_condition (expected keys: $(collect(keys(CUE_CONDITION_SETUP))))")
+    end
+    n_cues = length(CUE_CONDITION_SETUP[cue_condition])
+    @assert n_cues in (1, 2) "CueCondition $cue_condition mapped to $n_cues cues, expected 1 or 2."
+    return n_cues == 1 ? :single : :double
+end
 
 """
     get_weighting_mode()::Symbol
