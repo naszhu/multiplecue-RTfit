@@ -71,9 +71,23 @@ function run_analysis()
         cond_df = filter(r->r.CueCondition==cc, data)
         cond_type = Config.cue_condition_type(cc)
         p = mixture_rt_plot(cond_df, best; weighting_mode=weighting_mode, cue_condition=cc, cue_condition_type=cond_type)
-        savefig(p, joinpath(img_dir, "model_fit_dualmodes_P$(data_config.participant_id)_cond$(cc).png"))
         push!(plots, p)
     end
+    if !isempty(plots)
+        n_plots = length(plots)
+        n_cols = ceil(Int, sqrt(n_plots))
+        n_rows = ceil(Int, n_plots / n_cols)
+        combined = plot(plots..., layout=(n_rows,n_cols), size=(n_cols*500, n_rows*400))
+        savefig(combined, joinpath(img_dir, "model_fit_dualmodes_P$(data_config.participant_id)_allconditions.png"))
+    end
+
+    # Accuracy plot
+    cond_dict = Dict{Any,DataFrame}()
+    for cc in cue_conditions
+        cond_dict[cc] = filter(r->r.CueCondition==cc, data)
+    end
+    acc_plot = accuracy_plot_dualmodes(cond_dict, best; weighting_mode=weighting_mode)
+    savefig(acc_plot, joinpath(img_dir, "accuracy_dualmodes_P$(data_config.participant_id)_allconditions.png"))
     println("Analysis complete.")
 end
 

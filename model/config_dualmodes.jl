@@ -6,12 +6,12 @@
 module ConfigDualModes
 
 export ModelConfig, DualModesParams, DataConfig
-export get_default_dualmodes_params, get_data_config, get_weighting_mode, get_plot_config
+export get_default_dualmodes_params, get_data_config, get_weighting_mode, get_plot_config, cue_condition_type
 export PARTICIPANT_ID_DUALMODES, OUTPUT_CSV_DUALMODES, OUTPUT_PLOT_DUALMODES
 export WEIGHTING_MODE_DUALMODES
 
-import Main.Config
-using Main.Config: DataConfig, DATA_BASE_DIR, cue_condition_type  # reuse DataConfig and base path
+import Base.Filesystem: joinpath
+using Base: @assert
 
 struct ModelConfig
     show_target_choice::Bool
@@ -39,6 +39,27 @@ struct DualModesParams
     x0::Vector{Float64}
 end
 
+# Minimal DataConfig copy (decoupled from main config)
+struct DataConfig
+    participant_id::Int
+    data_base_path::String
+    file_pattern::String
+end
+
+const DATA_BASE_DIR = joinpath(@__DIR__, "..", "data")
+
+function cue_condition_type(cc)::Symbol
+    single_set = Set([1,2,3,4])
+    double_set = Set([5,6,7,8,9,10])
+    if cc in single_set
+        return :single
+    elseif cc in double_set
+        return :double
+    else
+        error("Unexpected CueCondition $cc")
+    end
+end
+
 # Returns parameter bounds/starts for [C_fast, C_slow, w2, w3, w4, A, k_fast, k_slow, t0, pi_single, pi_double] (free mode)
 # or [C_fast, C_slow, w_slope, A, k_fast, k_slow, t0, pi_single, pi_double] (exponential mode)
 function get_default_dualmodes_params(weighting_mode::Symbol=:free)::DualModesParams
@@ -56,6 +77,11 @@ function get_default_dualmodes_params(weighting_mode::Symbol=:free)::DualModesPa
     return DualModesParams(lower, upper, x0)
 end
 
-get_data_config(participant_id::Int)::DataConfig = Config.get_data_config(participant_id)
+function get_data_config(participant_id::Int)::DataConfig
+    @assert participant_id in (1,2,3)
+    folder = "ParticipantCPP002-00$(participant_id)"
+    data_path = joinpath(DATA_BASE_DIR, folder, folder)
+    return DataConfig(participant_id, data_path, "*.dat")
+end
 
 end # module
