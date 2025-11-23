@@ -124,53 +124,15 @@ function run_analysis()
     preprocessed_data = preprocess_data_for_fitting(data; cue_condition_types=cue_condition_types, group_by_condition=group_by_condition)
 
     # Step 4: Fit single model to ALL data at once with shared parameters
-    # Get parameter bounds and initial values from configuration, with optional cue-type variation
-    params_config = get_default_single_params(weighting_mode)
-    lower = Float64[]
-    upper = Float64[]
-    x0 = Float64[]
-    param_names = String[]
-
-    # C parameters
-    c_start_override = Config.C_START_OVERRIDE_ALLCONDITIONS
-    c_single_start = isnothing(c_start_override) ? params_config.x0[1] : (isa(c_start_override, Tuple) ? c_start_override[1] : c_start_override)
-    push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, c_single_start); push!(param_names, "C_single")
-    if vary_C_by_cue_type
-        c_double_start = isnothing(c_start_override) ? params_config.x0[1] : (isa(c_start_override, Tuple) ? c_start_override[end] : c_start_override)
-        push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, c_double_start); push!(param_names, "C_double")
-    end
-
-    if weighting_mode == :exponential
-        push!(lower, params_config.lower[2]); push!(upper, params_config.upper[2]); push!(x0, params_config.x0[2]); push!(param_names, "w_slope")
-        push!(lower, params_config.lower[3]); push!(upper, params_config.upper[3]); push!(x0, params_config.x0[3]); push!(param_names, "A")
-        push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "k_single")
-        if vary_k_by_cue_type
-            push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "k_double")
-        end
-        push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "t0_single")
-        if vary_t0_by_cue_type
-            push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "t0_double")
-        end
-    else
-        # weighting_mode == :free
-        push!(lower, params_config.lower[2]); push!(upper, params_config.upper[2]); push!(x0, params_config.x0[2]); push!(param_names, "w2")
-        push!(lower, params_config.lower[3]); push!(upper, params_config.upper[3]); push!(x0, params_config.x0[3]); push!(param_names, "w3")
-        push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "w4")
-        push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "A")
-        push!(lower, params_config.lower[6]); push!(upper, params_config.upper[6]); push!(x0, params_config.x0[6]); push!(param_names, "k_single")
-        if vary_k_by_cue_type
-            push!(lower, params_config.lower[6]); push!(upper, params_config.upper[6]); push!(x0, params_config.x0[6]); push!(param_names, "k_double")
-        end
-        push!(lower, params_config.lower[7]); push!(upper, params_config.upper[7]); push!(x0, params_config.x0[7]); push!(param_names, "t0_single")
-        if vary_t0_by_cue_type
-        push!(lower, params_config.lower[7]); push!(upper, params_config.upper[7]); push!(x0, params_config.x0[7]); push!(param_names, "t0_double")
-        end
-    end
-
-    if Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS && Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS
-        push!(lower, Config.CONTAMINANT_ALPHA_BOUNDS_ALLCONDITIONS[1]); push!(upper, Config.CONTAMINANT_ALPHA_BOUNDS_ALLCONDITIONS[2]); push!(x0, Config.CONTAMINANT_ALPHA_ALLCONDITIONS); push!(param_names, "alpha_contam")
-        push!(lower, Config.CONTAMINANT_RT_MAX_BOUNDS_ALLCONDITIONS[1]); push!(upper, Config.CONTAMINANT_RT_MAX_BOUNDS_ALLCONDITIONS[2]); push!(x0, Config.CONTAMINANT_RT_MAX_ALLCONDITIONS); push!(param_names, "rtmax_contam")
-    end
+    params_config, param_names = build_allconditions_params(weighting_mode;
+        vary_C_by_cue=vary_C_by_cue_type,
+        vary_t0_by_cue=vary_t0_by_cue_type,
+        vary_k_by_cue=vary_k_by_cue_type,
+        use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS,
+        estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS)
+    lower = params_config.lower
+    upper = params_config.upper
+    x0 = params_config.x0
 
     flag_tokens = String[]
     push!(flag_tokens, weighting_mode == :free ? "wfree" : "wslope")

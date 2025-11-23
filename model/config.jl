@@ -7,6 +7,7 @@ module Config
 
 export ModelConfig, SingleLBAParams, DualLBAParams, DataConfig, OptimizationConfig
 export get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config, get_weighting_mode, get_plot_config
+export build_allconditions_params
 export ACCURACY_YLIM, SAVE_INDIVIDUAL_CONDITION_PLOTS, SHOW_TARGET_CHOICE_IN_PLOTS, SHOW_DISTRACTOR_CHOICE_IN_PLOTS
 export RT_ALLCONDITIONS_YLIM, AXIS_FONT_SIZE
 export DATA_BASE_DIR, DATA_PATH, FILE_PATTERN
@@ -87,10 +88,10 @@ struct DualLBAParams
 end
 
 # Default weighting mode for reward transforms (either :exponential or :free)
-const DEFAULT_WEIGHTING_MODE = :exponential
+const DEFAULT_WEIGHTING_MODE = :free
 
 # Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
-const VARY_C_BY_CUECOUNT_ALLCONDITIONS = false
+const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
 const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = false
 const VARY_K_BY_CUECOUNT_ALLCONDITIONS = false
 
@@ -178,6 +179,72 @@ Returns the default weighting mode for reward-to-weight transform.
 Change `DEFAULT_WEIGHTING_MODE` to `:free` to estimate separate weights per reward value.
 """
 get_weighting_mode()::Symbol = DEFAULT_WEIGHTING_MODE
+
+"""
+    build_allconditions_params(weighting_mode; vary_C_by_cue, vary_t0_by_cue, vary_k_by_cue, use_contaminant, estimate_contaminant)
+
+Constructs parameter arrays and names for the all-conditions single LBA with optional cue-specific C/t0/k and optional contaminant estimation.
+Order matches mis_lba_allconditions_loglike.
+"""
+function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE;
+    vary_C_by_cue::Bool=VARY_C_BY_CUECOUNT_ALLCONDITIONS,
+    vary_t0_by_cue::Bool=VARY_T0_BY_CUECOUNT_ALLCONDITIONS,
+    vary_k_by_cue::Bool=VARY_K_BY_CUECOUNT_ALLCONDITIONS,
+    use_contaminant::Bool=USE_CONTAMINANT_FLOOR_ALLCONDITIONS,
+    estimate_contaminant::Bool=ESTIMATE_CONTAMINANT_ALLCONDITIONS)
+
+    params_config = get_default_single_params(weighting_mode)
+    names = String[]
+    lower = Float64[]
+    upper = Float64[]
+    x0 = Float64[]
+
+    function pushp!(n, lo, up, start)
+        push!(names, n); push!(lower, lo); push!(upper, up); push!(x0, start); return length(names)
+    end
+
+    # C
+    pushp!("C_single", params_config.lower[1], params_config.upper[1], params_config.x0[1])
+    if vary_C_by_cue
+        pushp!("C_double", params_config.lower[1], params_config.upper[1], params_config.x0[1])
+    end
+
+    # weights
+    if weighting_mode == :exponential
+        pushp!("w_slope", params_config.lower[2], params_config.upper[2], params_config.x0[2])
+        pushp!("A", params_config.lower[3], params_config.upper[3], params_config.x0[3])
+        pushp!("k_single", params_config.lower[4], params_config.upper[4], params_config.x0[4])
+        if vary_k_by_cue
+            pushp!("k_double", params_config.lower[4], params_config.upper[4], params_config.x0[4])
+        end
+        pushp!("t0_single", params_config.lower[5], params_config.upper[5], params_config.x0[5])
+        if vary_t0_by_cue
+            pushp!("t0_double", params_config.lower[5], params_config.upper[5], params_config.x0[5])
+        end
+    else
+        # free
+        pushp!("w2", params_config.lower[2], params_config.upper[2], params_config.x0[2])
+        pushp!("w3", params_config.lower[3], params_config.upper[3], params_config.x0[3])
+        pushp!("w4", params_config.lower[4], params_config.upper[4], params_config.x0[4])
+        pushp!("A", params_config.lower[5], params_config.upper[5], params_config.x0[5])
+        pushp!("k_single", params_config.lower[6], params_config.upper[6], params_config.x0[6])
+        if vary_k_by_cue
+            pushp!("k_double", params_config.lower[6], params_config.upper[6], params_config.x0[6])
+        end
+        pushp!("t0_single", params_config.lower[7], params_config.upper[7], params_config.x0[7])
+        if vary_t0_by_cue
+            pushp!("t0_double", params_config.lower[7], params_config.upper[7], params_config.x0[7])
+        end
+    end
+
+    # contaminant (alpha, rt_max) at end if estimated
+    if use_contaminant && estimate_contaminant
+        pushp!("alpha_contam", CONTAMINANT_ALPHA_BOUNDS_ALLCONDITIONS[1], CONTAMINANT_ALPHA_BOUNDS_ALLCONDITIONS[2], CONTAMINANT_ALPHA_ALLCONDITIONS)
+        pushp!("rtmax_contam", CONTAMINANT_RT_MAX_BOUNDS_ALLCONDITIONS[1], CONTAMINANT_RT_MAX_BOUNDS_ALLCONDITIONS[2], CONTAMINANT_RT_MAX_ALLCONDITIONS)
+    end
+
+    return SingleLBAParams(lower, upper, x0), names
+end
 
 """
     get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)::SingleLBAParams
