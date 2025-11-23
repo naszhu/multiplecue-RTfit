@@ -10,6 +10,7 @@ using Distributions
 using SequentialSamplingModels
 
 export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike, mis_lba_single_loglike, mis_lba_allconditions_loglike
+export mis_lba_dualmodes_loglike
 export PreprocessedData, preprocess_data_for_fitting
 
 """
@@ -27,6 +28,195 @@ struct PreprocessedData
     n_trials::Int
 end
 
+# Preprocessed version for speed
+function mis_lba_dualmodes_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; weighting_mode::Symbol=:free, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, r_max::Union{Nothing,Float64}=nothing)::Float64
+    p_idx = 1
+    C_fast = params[p_idx]; p_idx+=1
+    C_slow = params[p_idx]; p_idx+=1
+    if weighting_mode == :free
+        w2 = params[p_idx]; p_idx+=1
+        w3 = params[p_idx]; p_idx+=1
+        w4 = params[p_idx]; p_idx+=1
+    else
+        w2=w3=w4=0.0
+    end
+    A = params[p_idx]; p_idx+=1
+    k_fast = params[p_idx]; p_idx+=1
+    k_slow = params[p_idx]; p_idx+=1
+    t0 = params[p_idx]; p_idx+=1
+    pi_single = params[p_idx]; p_idx+=1
+    pi_double = params[p_idx]; p_idx+=1
+    if C_fast<=0 || C_slow<=0 || A<=0 || k_fast<=0 || k_slow<=0 || t0<=0 || t0<0.01 || pi_single<0 || pi_single>1 || pi_double<0 || pi_double>1
+        return Inf
+    end
+
+    if weighting_mode == :exponential
+        w_slope = weighting_mode == :exponential ? params[3] : 0.0
+        r_use = isnothing(r_max) ? 4.0 : r_max
+        w_slope_normalized = w_slope / r_use
+    else
+        w_slope_normalized = 0.0
+    end
+
+    weight_lookup = nothing
+    default_weight = 1e-10
+    if weighting_mode == :free
+        val_type = typeof(C_fast)
+        weight_lookup = Dict{Float64,val_type}(1.0=>one(val_type),2.0=>w2,3.0=>w3,4.0=>w4,0.0=>convert(val_type,1e-10))
+        default_weight = weight_lookup[0.0]
+    end
+
+    total_neg_ll = 0.0
+    for (idx, rewards) in enumerate(preprocessed.unique_rewards)
+        trial_indices = preprocessed.trial_groups[idx]
+        cond_type = preprocessed.group_condition_types[idx]
+        pi_use = cond_type==:double ? pi_double : pi_single
+
+        weights = weighting_mode==:exponential ? exp.(w_slope_normalized .* rewards) : [get(weight_lookup,r,default_weight) for r in rewards]
+        rel_weights = weights ./ sum(weights)
+        drift_fast = C_fast .* rel_weights
+        drift_slow = C_slow .* rel_weights
+
+        lba_fast = LBA(ν=drift_fast, A=A, k=k_fast, τ=t0)
+        lba_slow = LBA(ν=drift_slow, A=A, k=k_slow, τ=t0)
+
+        for trial_idx in trial_indices
+            rt = preprocessed.rts[trial_idx]
+            choice = preprocessed.choices[trial_idx]
+            lik_fast = (rt>t0) ? try
+                    val = pdf(lba_fast,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+                catch
+                    1e-10
+                end : 1e-10
+            lik_slow = (rt>t0) ? try
+                    val = pdf(lba_slow,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+                catch
+                    1e-10
+                end : 1e-10
+            lik = pi_use * lik_fast + (1 - pi_use) * lik_slow
+            if lik <= 1e-20 lik = 1e-20 end
+            total_neg_ll -= log(lik)
+        end
+    end
+    return total_neg_ll
+end
+
+# ==========================================================================
+# Dual-mode (two LBA) mixture with shared weights, condition-dependent mix
+# ==========================================================================
+"""
+    mis_lba_dualmodes_loglike(params, df; weighting_mode=:free, cue_condition_types=nothing, r_max=nothing)
+
+Parameters (free mode):
+    [C_fast, C_slow, w2, w3, w4, A, k_fast, k_slow, t0, pi_single, pi_double]
+Parameters (exponential mode):
+    [C_fast, C_slow, w_slope, A, k_fast, k_slow, t0, pi_single, pi_double]
+Mixing probability is pi_single for single-cue conditions and pi_double for double-cue conditions.
+"""
+function mis_lba_dualmodes_loglike(params::Vector{<:Real}, df::DataFrame; weighting_mode::Symbol=:free, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, r_max::Union{Nothing,Float64}=nothing)::Float64
+    # Build condition types if needed
+    cond_types = cue_condition_types
+    if isnothing(cond_types)
+        if !("CueCondition" in names(df))
+            error("CueCondition column required for dual-mode mixture.")
+        end
+        single_set = Set([1, 2, 3, 4])
+        double_set = Set([5, 6, 7, 8, 9, 10])
+        cond_types = Vector{Symbol}(undef, nrow(df))
+        for (i, cc) in enumerate(df.CueCondition)
+            if cc in single_set
+                cond_types[i] = :single
+            elseif cc in double_set
+                cond_types[i] = :double
+            else
+                error("Unexpected CueCondition $cc")
+            end
+        end
+    end
+
+    p_idx = 1
+    C_fast = params[p_idx]; p_idx += 1
+    C_slow = params[p_idx]; p_idx += 1
+    if weighting_mode == :free
+        w2 = params[p_idx]; p_idx += 1
+        w3 = params[p_idx]; p_idx += 1
+        w4 = params[p_idx]; p_idx += 1
+    else
+        w2 = w3 = w4 = 0.0
+    end
+    A = params[p_idx]; p_idx += 1
+    k_fast = params[p_idx]; p_idx += 1
+    k_slow = params[p_idx]; p_idx += 1
+    t0 = params[p_idx]; p_idx += 1
+    pi_single = params[p_idx]; p_idx += 1
+    pi_double = params[p_idx]; p_idx += 1
+
+    if C_fast<=0 || C_slow<=0 || A<=0 || k_fast<=0 || k_slow<=0 || t0<=0 || t0<0.01 || pi_single<0 || pi_single>1 || pi_double<0 || pi_double>1
+        return Inf
+    end
+
+    if weighting_mode == :exponential
+        w_slope = params[p_idx-3]  # back up to w_slope position
+        w_slope_normalized = isnothing(r_max) ? (w_slope / 4.0) : (w_slope / r_max)
+    else
+        w_slope_normalized = 0.0
+    end
+
+    weight_lookup = nothing
+    default_weight = 1e-10
+    if weighting_mode == :free
+        val_type = typeof(C_fast)
+        weight_lookup = Dict{Float64, val_type}(1.0=>one(val_type), 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>convert(val_type, 1e-10))
+        default_weight = weight_lookup[0.0]
+    end
+
+    # Cache drift rates per reward configuration to avoid recompute
+    drift_cache_fast = Dict{Tuple{Vararg{Float64}}, Any}()
+    drift_cache_slow = Dict{Tuple{Vararg{Float64}}, Any}()
+
+    total_neg_ll = 0.0
+    for i in 1:nrow(df)
+        rt = df.CleanRT[i]
+        choice = df.Choice[i]
+        rewards = df.ParsedRewards[i]
+        key = Tuple(rewards)
+
+        if haskey(drift_cache_fast, key)
+            drift_fast = drift_cache_fast[key]
+            drift_slow = drift_cache_slow[key]
+        else
+            weights = weighting_mode == :exponential ?
+                      exp.(w_slope_normalized .* rewards) :
+                      [get(weight_lookup, r, default_weight) for r in rewards]
+            rel_weights = weights ./ sum(weights)
+            drift_fast = C_fast .* rel_weights
+            drift_slow = C_slow .* rel_weights
+            drift_cache_fast[key] = drift_fast
+            drift_cache_slow[key] = drift_slow
+        end
+
+        lba_fast = LBA(ν=drift_fast, A=A, k=k_fast, τ=t0)
+        lba_slow = LBA(ν=drift_slow, A=A, k=k_slow, τ=t0)
+
+        lik_fast = (rt > t0) ? try
+                val = pdf(lba_fast, (choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+            catch
+                1e-10
+            end : 1e-10
+        lik_slow = (rt > t0) ? try
+                val = pdf(lba_slow, (choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+            catch
+                1e-10
+            end : 1e-10
+
+        pi_use = cond_types[i] == :double ? pi_double : pi_single
+        lik = pi_use * lik_fast + (1 - pi_use) * lik_slow
+        if lik <= 1e-20 lik = 1e-20 end
+        total_neg_ll -= log(lik)
+    end
+
+    return total_neg_ll
+end
 """
     preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
 
