@@ -47,9 +47,11 @@ function run_analysis()
     weighting_mode = isnothing(Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS) ? get_weighting_mode() : Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS
     vary_C_by_cue_type = Config.VARY_C_BY_CUECOUNT_ALLCONDITIONS
     vary_t0_by_cue_type = Config.VARY_T0_BY_CUECOUNT_ALLCONDITIONS
+    vary_k_by_cue_type = Config.VARY_K_BY_CUECOUNT_ALLCONDITIONS
     println("Reward weighting mode: $weighting_mode")
     println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
     println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
+    println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
 
     # Create configuration with plot display flags
     plot_config = get_plot_config()  # from RunFlags
@@ -117,7 +119,7 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("PREPROCESSING DATA FOR OPTIMIZATION")
     println("=" ^ 70)
-    group_by_condition = vary_C_by_cue_type || vary_t0_by_cue_type
+    group_by_condition = vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type
     preprocessed_data = preprocess_data_for_fitting(data; cue_condition_types=cue_condition_types, group_by_condition=group_by_condition)
 
     # Step 4: Fit single model to ALL data at once with shared parameters
@@ -137,7 +139,10 @@ function run_analysis()
     if weighting_mode == :exponential
         push!(lower, params_config.lower[2]); push!(upper, params_config.upper[2]); push!(x0, params_config.x0[2]); push!(param_names, "w_slope")
         push!(lower, params_config.lower[3]); push!(upper, params_config.upper[3]); push!(x0, params_config.x0[3]); push!(param_names, "A")
-        push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "k")
+        push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "k_single")
+        if vary_k_by_cue_type
+            push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "k_double")
+        end
         push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "t0_single")
         if vary_t0_by_cue_type
             push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "t0_double")
@@ -148,7 +153,10 @@ function run_analysis()
         push!(lower, params_config.lower[3]); push!(upper, params_config.upper[3]); push!(x0, params_config.x0[3]); push!(param_names, "w3")
         push!(lower, params_config.lower[4]); push!(upper, params_config.upper[4]); push!(x0, params_config.x0[4]); push!(param_names, "w4")
         push!(lower, params_config.lower[5]); push!(upper, params_config.upper[5]); push!(x0, params_config.x0[5]); push!(param_names, "A")
-        push!(lower, params_config.lower[6]); push!(upper, params_config.upper[6]); push!(x0, params_config.x0[6]); push!(param_names, "k")
+        push!(lower, params_config.lower[6]); push!(upper, params_config.upper[6]); push!(x0, params_config.x0[6]); push!(param_names, "k_single")
+        if vary_k_by_cue_type
+            push!(lower, params_config.lower[6]); push!(upper, params_config.upper[6]); push!(x0, params_config.x0[6]); push!(param_names, "k_double")
+        end
         push!(lower, params_config.lower[7]); push!(upper, params_config.upper[7]); push!(x0, params_config.x0[7]); push!(param_names, "t0_single")
         if vary_t0_by_cue_type
             push!(lower, params_config.lower[7]); push!(upper, params_config.upper[7]); push!(x0, params_config.x0[7]); push!(param_names, "t0_double")
@@ -162,6 +170,9 @@ function run_analysis()
     end
     if vary_t0_by_cue_type
         push!(flag_tokens, "t0cue")
+    end
+    if vary_k_by_cue_type
+        push!(flag_tokens, "kcue")
     end
     flag_suffix = isempty(flag_tokens) ? "" : "_" * join(flag_tokens, "-")
 
@@ -186,7 +197,7 @@ function run_analysis()
     println("\n" * "-" ^ 70)
     println("RUNNING OPTIMIZATION")
     println("-" ^ 70)
-    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type)
+    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type)
     result = fit_model(preprocessed_data, objective_func;
                        lower=lower, upper=upper, x0=x0, time_limit=600.0)
 
@@ -291,7 +302,7 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(flag_suffix).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond))
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond))
         push!(individual_plots, p)
     end
 
@@ -332,7 +343,7 @@ function run_analysis()
         println("=" ^ 70)
 
         overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
-        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, cue_condition_type_fn=Config.cue_condition_type)
+        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type)
     end
 
     println("\n" * "=" ^ 70)

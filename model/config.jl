@@ -16,7 +16,7 @@ export PARTICIPANT_ID_SINGLE, OUTPUT_CSV_SINGLE, OUTPUT_PLOT_SINGLE
 export PARTICIPANT_ID_DUAL, OUTPUT_CSV_DUAL, OUTPUT_PLOT_DUAL
 export PARTICIPANT_ID_ALLCONDITIONS, WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS, OUTPUT_CSV_ALLCONDITIONS, OUTPUT_PLOT_ALLCONDITIONS
 export CUE_CONDITION_SETUP, SINGLE_CUE_CONDITIONS, DOUBLE_CUE_CONDITIONS, cue_condition_type
-export VARY_C_BY_CUECOUNT_ALLCONDITIONS, VARY_T0_BY_CUECOUNT_ALLCONDITIONS
+export VARY_C_BY_CUECOUNT_ALLCONDITIONS, VARY_T0_BY_CUECOUNT_ALLCONDITIONS, VARY_K_BY_CUECOUNT_ALLCONDITIONS
 
 """
     ModelConfig
@@ -86,9 +86,10 @@ end
 # Default weighting mode for reward transforms (either :exponential or :free)
 const DEFAULT_WEIGHTING_MODE = :free
 
-# Allow C/t0 to vary by cue-count (single vs double cue) in all-conditions run
+# Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
 const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
 const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = true
+const VARY_K_BY_CUECOUNT_ALLCONDITIONS = true
 
 # Y-limits for accuracy plots (observed vs predicted)
 # Adjust here to change the vertical range of all accuracy figures
@@ -169,6 +170,8 @@ get_weighting_mode()::Symbol = DEFAULT_WEIGHTING_MODE
 
 Returns default parameter bounds and initial values for single LBA model.
 Parameters: [C, w_slope, A, k, t0]
+
+the single here means the single LBA 
 """
 function get_default_single_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE)::SingleLBAParams
     if weighting_mode == :exponential
