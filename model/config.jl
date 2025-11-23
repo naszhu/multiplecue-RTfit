@@ -17,6 +17,8 @@ export PARTICIPANT_ID_DUAL, OUTPUT_CSV_DUAL, OUTPUT_PLOT_DUAL
 export PARTICIPANT_ID_ALLCONDITIONS, WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS, OUTPUT_CSV_ALLCONDITIONS, OUTPUT_PLOT_ALLCONDITIONS
 export CUE_CONDITION_SETUP, SINGLE_CUE_CONDITIONS, DOUBLE_CUE_CONDITIONS, cue_condition_type
 export VARY_C_BY_CUECOUNT_ALLCONDITIONS, VARY_T0_BY_CUECOUNT_ALLCONDITIONS, VARY_K_BY_CUECOUNT_ALLCONDITIONS
+export USE_CONTAMINANT_FLOOR_ALLCONDITIONS, CONTAMINANT_ALPHA_ALLCONDITIONS, CONTAMINANT_RT_MAX_ALLCONDITIONS
+export C_START_OVERRIDE_ALLCONDITIONS
 
 """
     ModelConfig
@@ -90,6 +92,14 @@ const DEFAULT_WEIGHTING_MODE = :free
 const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
 const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = true
 const VARY_K_BY_CUECOUNT_ALLCONDITIONS = true
+
+# Optional contaminant (uniform) floor to reduce catastrophic penalties from long tails
+const USE_CONTAMINANT_FLOOR_ALLCONDITIONS = true
+const CONTAMINANT_ALPHA_ALLCONDITIONS = 0.02   # mixture weight for uniform RT noise
+const CONTAMINANT_RT_MAX_ALLCONDITIONS = 3.0   # seconds, upper bound for uniform RT
+
+# Optional starting-value override for C (single or tuple for single/double)
+const C_START_OVERRIDE_ALLCONDITIONS = nothing  # e.g., 30.0 or (30.0, 30.0)
 
 # Y-limits for accuracy plots (observed vs predicted)
 # Adjust here to change the vertical range of all accuracy figures

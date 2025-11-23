@@ -361,12 +361,12 @@ function mis_lba_single_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Un
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
 
     Computes the negative log-likelihood for a single LBA model fitted to ALL conditions at once.
     Allows optional variation of C and/or t0 by single vs double cue conditions.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
     # Derive cue-condition types if needed
     cond_types = nothing
     if vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type
@@ -506,6 +506,11 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
             lik = 1e-10
         end
 
+        if use_contaminant
+            uniform_density = 1.0 / contaminant_rt_max
+            lik = (1 - contaminant_alpha) * lik + contaminant_alpha * uniform_density
+        end
+
         if lik <= 1e-20 lik = 1e-20 end
         total_neg_ll -= log(lik)
     end
@@ -514,13 +519,13 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
 
 Ultra-fast likelihood computation using preprocessed data (method overload).
 Computes drift rates only once per unique reward configuration.
 This version is 3-5x faster than the DataFrame version.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false)::Float64
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
     # Unpack parameters and constraints based on weighting_mode
     p_idx = 1
     C_single = params[p_idx]; p_idx += 1
@@ -616,6 +621,11 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
                 end
             else
                 lik = 1e-10
+            end
+
+            if use_contaminant
+                uniform_density = 1.0 / contaminant_rt_max
+                lik = (1 - contaminant_alpha) * lik + contaminant_alpha * uniform_density
             end
 
             if lik <= 1e-20 lik = 1e-20 end

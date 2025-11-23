@@ -52,6 +52,7 @@ function run_analysis()
     println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
     println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
     println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
+    println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
 
     # Create configuration with plot display flags
     plot_config = get_plot_config()  # from RunFlags
@@ -131,9 +132,12 @@ function run_analysis()
     param_names = String[]
 
     # C parameters
-    push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, params_config.x0[1]); push!(param_names, "C_single")
+    c_start_override = Config.C_START_OVERRIDE_ALLCONDITIONS
+    c_single_start = isnothing(c_start_override) ? params_config.x0[1] : (isa(c_start_override, Tuple) ? c_start_override[1] : c_start_override)
+    push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, c_single_start); push!(param_names, "C_single")
     if vary_C_by_cue_type
-        push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, params_config.x0[1]); push!(param_names, "C_double")
+        c_double_start = isnothing(c_start_override) ? params_config.x0[1] : (isa(c_start_override, Tuple) ? c_start_override[end] : c_start_override)
+        push!(lower, params_config.lower[1]); push!(upper, params_config.upper[1]); push!(x0, c_double_start); push!(param_names, "C_double")
     end
 
     if weighting_mode == :exponential
@@ -174,6 +178,9 @@ function run_analysis()
     if vary_k_by_cue_type
         push!(flag_tokens, "kcue")
     end
+    if Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS
+        push!(flag_tokens, "contam$(Int(round(Config.CONTAMINANT_ALPHA_ALLCONDITIONS*100)))")
+    end
     flag_suffix = isempty(flag_tokens) ? "" : "_" * join(flag_tokens, "-")
 
     println("\n" * "=" ^ 70)
@@ -197,7 +204,7 @@ function run_analysis()
     println("\n" * "-" ^ 70)
     println("RUNNING OPTIMIZATION")
     println("-" ^ 70)
-    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type)
+    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS, contaminant_rt_max=Config.CONTAMINANT_RT_MAX_ALLCONDITIONS)
     result = fit_model(preprocessed_data, objective_func;
                        lower=lower, upper=upper, x0=x0, time_limit=600.0)
 
@@ -302,7 +309,7 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(flag_suffix).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond))
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond), use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS, contaminant_rt_max=Config.CONTAMINANT_RT_MAX_ALLCONDITIONS)
         push!(individual_plots, p)
     end
 
@@ -343,7 +350,7 @@ function run_analysis()
         println("=" ^ 70)
 
         overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
-        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type)
+        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS)
     end
 
     println("\n" * "=" ^ 70)

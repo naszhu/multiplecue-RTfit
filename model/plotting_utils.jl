@@ -1246,7 +1246,7 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single)::Plots.Plot
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
     # Unpack parameters based on weighting mode
@@ -1409,6 +1409,12 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         end
     end
 
+    # Add contaminant component (uniform RT)
+    if use_contaminant
+        uniform_density = contaminant_alpha / contaminant_rt_max
+        y_pred_total .+= uniform_density
+    end
+
     # Normalize
     if total_weight > 0
         y_pred_total ./= total_weight
@@ -1461,7 +1467,7 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single)::Plots.Plot
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     # Unpack SHARED parameters
@@ -1594,6 +1600,11 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
                     catch
                     end
                 end
+            end
+
+            if use_contaminant
+                n_opts = length(rewards)
+                pred_prob = (1 - contaminant_alpha) * pred_prob + contaminant_alpha * (1 / n_opts)
             end
 
             # Weight by number of trials
