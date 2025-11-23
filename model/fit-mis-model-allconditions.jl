@@ -48,6 +48,8 @@ function run_analysis()
     vary_C_by_cue_type = Config.VARY_C_BY_CUECOUNT_ALLCONDITIONS
     vary_t0_by_cue_type = Config.VARY_T0_BY_CUECOUNT_ALLCONDITIONS
     vary_k_by_cue_type = Config.VARY_K_BY_CUECOUNT_ALLCONDITIONS
+    use_contam = Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS
+    estimate_contam = Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS
     println("Reward weighting mode: $weighting_mode")
     println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
     println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
@@ -120,16 +122,18 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("PREPROCESSING DATA FOR OPTIMIZATION")
     println("=" ^ 70)
-    group_by_condition = vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type
+    group_by_condition = vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type || Config.VARY_CONTAM_BY_CUE_ALLCONDITIONS
     preprocessed_data = preprocess_data_for_fitting(data; cue_condition_types=cue_condition_types, group_by_condition=group_by_condition)
 
     # Step 4: Fit single model to ALL data at once with shared parameters
-    params_config, param_names = build_allconditions_params(weighting_mode;
+    params_config, layout, param_names = build_allconditions_params(weighting_mode;
         vary_C_by_cue=vary_C_by_cue_type,
         vary_t0_by_cue=vary_t0_by_cue_type,
         vary_k_by_cue=vary_k_by_cue_type,
-        use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS,
-        estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS)
+        use_contaminant=use_contam,
+        estimate_contaminant=estimate_contam,
+        vary_contam_by_cue=Config.VARY_CONTAM_BY_CUE_ALLCONDITIONS,
+        c_start_override=Config.C_START_OVERRIDE_ALLCONDITIONS)
     lower = params_config.lower
     upper = params_config.upper
     x0 = params_config.x0
@@ -145,9 +149,9 @@ function run_analysis()
     if vary_k_by_cue_type
         push!(flag_tokens, "kcue")
     end
-    if Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS
-        if Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS
-            push!(flag_tokens, "contamEst")
+    if use_contam
+        if estimate_contam
+            push!(flag_tokens, layout.vary_contam_by_cue ? "contamEstCue" : "contamEst")
         else
             push!(flag_tokens, "contam$(Int(round(Config.CONTAMINANT_ALPHA_ALLCONDITIONS*100)))")
         end
@@ -175,7 +179,7 @@ function run_analysis()
     println("\n" * "-" ^ 70)
     println("RUNNING OPTIMIZATION")
     println("-" ^ 70)
-    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS, contaminant_rt_max=Config.CONTAMINANT_RT_MAX_ALLCONDITIONS)
+    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; layout=layout, r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS, contaminant_rt_max=Config.CONTAMINANT_RT_MAX_ALLCONDITIONS)
     result = fit_model(preprocessed_data, objective_func;
                        lower=lower, upper=upper, x0=x0, time_limit=600.0)
 
@@ -183,14 +187,14 @@ function run_analysis()
     best_params = Optim.minimizer(result)
     contam_alpha_use = Config.CONTAMINANT_ALPHA_ALLCONDITIONS
     contam_rtmax_use = Config.CONTAMINANT_RT_MAX_ALLCONDITIONS
-    if Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS && Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS
-        idx_alpha = findfirst(==("alpha_contam"), param_names)
-        idx_rt = findfirst(==("rtmax_contam"), param_names)
-        if !isnothing(idx_alpha)
-            contam_alpha_use = best_params[idx_alpha]
+    if layout.use_contaminant && layout.estimate_contaminant
+        if !isempty(layout.idx_contam_alpha)
+            key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+            contam_alpha_use = best_params[layout.idx_contam_alpha[key]]
         end
-        if !isnothing(idx_rt)
-            contam_rtmax_use = best_params[idx_rt]
+        if !isempty(layout.idx_contam_rt)
+            key = haskey(layout.idx_contam_rt, :all) ? :all : :single
+            contam_rtmax_use = best_params[layout.idx_contam_rt[key]]
         end
     end
 
@@ -292,7 +296,7 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(flag_suffix).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond), use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, contaminant_rt_max=contam_rtmax_use)
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond), use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, contaminant_rt_max=contam_rtmax_use, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
         push!(individual_plots, p)
     end
 
@@ -333,7 +337,7 @@ function run_analysis()
         println("=" ^ 70)
 
         overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
-        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use)
+        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
     end
 
     println("\n" * "=" ^ 70)
