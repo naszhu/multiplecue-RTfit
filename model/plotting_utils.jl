@@ -5,18 +5,29 @@
 
 module PlottingUtils
 
+# Force GR into headless mode so plots can be generated without a display
+ENV["GKSwstype"] = "100"
+
 using DataFrames
 using Distributions
 using SequentialSamplingModels
 using Statistics
 using Plots
+using Main.Config
+
+# Shared styling defaults pulled from centralized Config
+const RT_ALLCONDITIONS_YLIM = Config.RT_ALLCONDITIONS_YLIM
+const AXIS_FONT_SIZE = Config.AXIS_FONT_SIZE
+
+# Accuracy plot y-limits
+get_accuracy_ylim()::Tuple{Float64,Float64} = Tuple{Float64,Float64}(Config.ACCURACY_YLIM)
 
 export generate_plot, generate_plot_dual, generate_plot_single
 export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot_single
 export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
 
 """
-    generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+    generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
 
     Generates a plot comparing observed RT distribution with model predictions.
     Shows the mixture components separately to visualize bimodality.
@@ -27,7 +38,7 @@ export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
     - output_plot: Output filename for plot
     - cue_condition: Optional cue condition identifier for plot title
 """
-function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing)
+function generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot...")
 
     # Unpack parameters
@@ -70,7 +81,9 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5,
              color=:darkblue, linestyle=:solid, alpha=0.8,
              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-             legend=:topright, size=(800, 600))
+             legend=:topright, size=(800, 600),
+             ylims=RT_ALLCONDITIONS_YLIM,
+             guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE)
 
     # Simulate Model Curve
     # We calculate the unconditional PDF by averaging across all unique reward structures
@@ -108,7 +121,7 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
         for (j, t) in enumerate(t_grid)
             # LBA component
             lba_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     # Sum pdf of all possible choices
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
@@ -188,12 +201,16 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
     end
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Express probability: $(round(p_exp, digits=6))")
     println("  Express mean: $(round(mu_exp, digits=3))s, std: $(round(sig_exp, digits=3))s")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     if p_exp > 1e-6
         println("  Express-LBA separation: $(round(separation*1000, digits=0))ms")
         println("  Express peak density: $(round(max_exp_dens, digits=4))")
@@ -202,6 +219,7 @@ function generate_plot(data::DataFrame, params, output_plot="model_fit_plot.png"
             println("  ⚠ WARNING: Express component may not create visible bimodality")
         end
     end
+    return p
 end
 
 """
@@ -217,7 +235,7 @@ end
     - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot for dual-LBA model...")
 
     # Unpack parameters
@@ -260,7 +278,9 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     p = plot(kde_grid, kde_dens, label="Observed", linewidth=2.5,
              color=:darkblue, linestyle=:solid, alpha=0.8,
              xlabel="Reaction Time (s)", ylabel="Density", title=title_str,
-             legend=:topright, size=(800, 600))
+             legend=:topright, size=(800, 600),
+             ylim=RT_ALLCONDITIONS_YLIM,
+             guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE)
 
     # Compute unconditional PDF
     t_grid = range(0.05, 1.5, length=300)
@@ -422,8 +442,12 @@ function generate_plot_dual(data::DataFrame, params, output_plot="model_fit_plot
     vline!(p, [max_lba2_rt], color=:green, linestyle=:dot, linewidth=1, alpha=0.5, label="")
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
     println("  Mixing probability: $(round(p_mix, digits=4))")
     println("  LBA1 (fast) - t0: $(round(t0_1, digits=3))s, peak at: $(round(max_lba1_rt, digits=3))s")
@@ -446,7 +470,7 @@ end
     - r_max: Optional maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_single(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+function generate_plot_single(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
     println("Generating plot for single LBA model...")
 
     # Unpack parameters
@@ -542,7 +566,7 @@ function generate_plot_single(data::DataFrame, params, output_plot="model_fit_pl
             lba_dens = 0.0
             lba_target_dens = 0.0
             lba_distractor_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
                     lba_target_dens = pdf(lba, (choice=target_choice, rt=t))
@@ -591,10 +615,14 @@ function generate_plot_single(data::DataFrame, params, output_plot="model_fit_pl
     # Add vertical line at peak
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
 
     return p
@@ -744,9 +772,10 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
 
         # Create plot
         title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)"
+        ylim_use = get_accuracy_ylim()
         p = plot(size=(1200, 700), title=title_str,
                  xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-                 ylim=(0, 1.05), legend=:topright)
+                 ylim=ylim_use, legend=:topright)
 
         x_pos = 1:length(condition_labels)
         scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=8, alpha=0.8)
@@ -763,8 +792,9 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
         plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
         # Add trial count annotations
+        annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
         for (i, n) in enumerate(n_trials_per_cond)
-            annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+            annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
         end
 
     else
@@ -832,8 +862,9 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
             title_str = "Choice Accuracy - Cue Condition: $cue_condition"
         end
 
+        ylim_use = get_accuracy_ylim()
         p = plot(size=(1000, 600), title=title_str, xlabel="Reward Structure",
-                 ylabel="Choice Probability (Target)", ylim=(0, 1.05), legend=:topright)
+                 ylabel="Choice Probability (Target)", ylim=ylim_use, legend=:topright)
 
         x_pos = 1:length(reward_keys)
         scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=6, alpha=0.7)
@@ -934,6 +965,15 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
         total_trials = 0
         total_pred_prob = 0.0
         total_weight = 0.0
+        alpha_cond = if use_contaminant
+            if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cond_type)
+                params[layout.idx_contam_alpha[cond_type]]
+            else
+                contam_alpha_use
+            end
+        else
+            0.0
+        end
 
         for (key, group) in reward_groups
             rewards = group["rewards"]
@@ -1000,9 +1040,10 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nUsing Condition-Specific Fitted Parameters"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:topright)
+             ylim=ylim_use, legend=:topright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1016,14 +1057,15 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
     plot!(p, [0, length(condition_labels)+1], [1, 1], linestyle=:dot, color=:gray, alpha=0.5, label="Perfect Accuracy", linewidth=1)
 
     # Add diagonal line (perfect prediction)
-    plot!(p, [0, length(condition_labels)+1], [0, 1], linestyle=:dot, color=:black, alpha=0.3, label="Perfect Prediction", linewidth=1)
+    plot!(p, [0, length(condition_labels)+1], [ylim_use[1], ylim_use[2]], linestyle=:dot, color=:black, alpha=0.3, label="Perfect Prediction", linewidth=1)
 
     # Set x-axis labels
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)
@@ -1132,7 +1174,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
             pred_prob = 0.0
 
             for t in t_grid
-                if t > t0
+                if t > t0_use
                     try
                         prob = pdf(lba, (choice=target_choice, rt=t))
                         if !isnan(prob) && !isinf(prob) && prob > 0
@@ -1161,9 +1203,10 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nSingle LBA Model - Condition-Specific Fitted Parameters"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:bottomright)
+             ylim=ylim_use, legend=:bottomright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1180,8 +1223,9 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)
@@ -1198,7 +1242,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 end
 
 """
-    generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing)
+    generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential)
 
     Generates a plot for single LBA model fitted to ALL conditions with SHARED parameters.
     This version shows the fit to RT distribution for a specific condition using the shared parameters.
@@ -1211,16 +1255,106 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params, output_plot="model_fit_plot.png"; cue_condition=nothing, r_max=nothing, config=nothing, weighting_mode::Symbol=:exponential)
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
-    # Unpack parameters based on weighting mode
-    if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
-    elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+    end
+
+    # Unpack parameters based on weighting mode / layout
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
+    contam_alpha_use = contaminant_alpha
+    contam_rt_use = contaminant_rt_max
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+    if layout === nothing
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        end
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]; p_idx += 1
+            contam_rt_use = params[p_idx]; p_idx += 1
+        end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+        contam_alpha_use = layout.contam_alpha_fixed
+        contam_rt_use = layout.contam_rt_fixed
+        if use_contaminant && estimate_contaminant
+            if !isempty(layout.idx_contam_alpha)
+                key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+                contam_alpha_use = params[layout.idx_contam_alpha[key]]
+            end
+            if !isempty(layout.idx_contam_rt)
+                key = haskey(layout.idx_contam_rt, :all) ? :all : :single
+                contam_rt_use = params[layout.idx_contam_rt[key]]
+            end
+        end
+    end
+    @assert cue_condition_type in (:single, :double) "cue_condition_type must be :single or :double"
+    C_use = cue_condition_type == :double ? C_double : C_single
+    k_use = cue_condition_type == :double ? k_double : k_single
+    t0_use = cue_condition_type == :double ? t0_double : t0_single
+    contam_alpha_cond = if use_contaminant
+        if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cue_condition_type)
+            params[layout.idx_contam_alpha[cue_condition_type]]
+        else
+            contam_alpha_use
+        end
+    else
+        0.0
+    end
+    contam_rt_cond = if use_contaminant
+        if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_rt, cue_condition_type)
+            params[layout.idx_contam_rt[cue_condition_type]]
+        else
+            contam_rt_use
+        end
+    else
+        1.0
     end
 
     # Create title
@@ -1229,9 +1363,11 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
         weight_str = weighting_mode == :exponential ?
                      "θ=$(round(w_slope, digits=2))" :
                      "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
-        title_str = "Cue Condition: $cue_condition\n(Shared: C=$(round(C, digits=2)), $weight_str, t0=$(round(t0, digits=3))s)"
+        c_label = cue_condition_type == :double ? "double-cue" : "single-cue"
+        title_str = "Cue Condition: $cue_condition ($c_label)\n(Shared: C=$(round(C_use, digits=2)), $weight_str, t0=$(round(t0_use, digits=3))s)"
     end
 
+    #TODO here can directly use density function from established packages, like KernelDensity.jl
     # Compute kernel density estimate (KDE) for observed data
     rt_min = minimum(data.CleanRT)
     rt_max = maximum(data.CleanRT)
@@ -1287,6 +1423,7 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
     end
 
     # Get unique reward structures
+    # TODO this part can be simplified, already calculated previously
     reward_counts = Dict()
     reward_arrays = Dict()
     for rewards in data.ParsedRewards
@@ -1309,10 +1446,10 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
         ws = weighting_mode == :exponential ?
              exp.(w_slope .* rewards ./ r_max) :
              [get(weight_lookup, r, default_weight) for r in rewards]
-        vs = C .* (ws ./ sum(ws))
+        vs = C_use .* (ws ./ sum(ws))
 
         # Single LBA component with SHARED parameters
-        lba = LBA(ν=vs, A=A, k=k, τ=t0)
+        lba = LBA(ν=vs, A=A, k=k_use, τ=t0_use)
 
         # Identify target choice (highest reward option)
         target_choice = argmax(rewards)
@@ -1323,7 +1460,7 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
             lba_dens = 0.0
             lba_target_dens = 0.0
             lba_distractor_dens = 0.0
-            if t > t0
+            if t > t0_use
                 try
                     lba_dens = sum([pdf(lba, (choice=c, rt=t)) for c in 1:length(vs)])
                     lba_target_dens = pdf(lba, (choice=target_choice, rt=t))
@@ -1338,7 +1475,12 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
                 end
             end
 
-            # Accumulate weighted
+            if use_contaminant
+                lba_dens = (1 - contam_alpha_cond) * lba_dens + contam_alpha_cond * (1 / contam_rt_cond)
+                lba_target_dens *= (1 - contam_alpha_cond)
+                lba_distractor_dens *= (1 - contam_alpha_cond)
+            end
+
             y_pred_total[j] += weight * lba_dens
             y_pred_target[j] += weight * lba_target_dens
             y_pred_distractor[j] += weight * lba_distractor_dens
@@ -1372,17 +1514,21 @@ function generate_plot_allconditions(data::DataFrame, params, output_plot="model
     # Add vertical line at peak
     vline!(p, [max_total_rt], color=:red, linestyle=:dot, linewidth=1, alpha=0.5, label="")
 
-    savefig(p, output_plot)
-    println("Saved plot to $output_plot")
+    if save_plot
+        savefig(p, output_plot)
+        println("Saved plot to $output_plot")
+    else
+        println("Skipped saving individual plot (save_plot=false)")
+    end
     println("  KDE bandwidth (adaptive): $(round(bandwidth, digits=4))s (n=$n, std=$(round(rt_std, digits=3)), IQR=$(round(rt_iqr, digits=3)))")
-    println("  Non-decision time (t0): $(round(t0, digits=3))s")
+    println("  Non-decision time (t0): $(round(t0_use, digits=3))s")
     println("  Peak RT: $(round(max_total_rt, digits=3))s")
 
     return p
 end
 
 """
-    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing)
+    generate_overall_accuracy_plot_allconditions(condition_data::Dict, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single)
 
     Generates one overall accuracy plot showing all CueConditions together using SHARED parameters.
     Unlike the condition-specific versions, this uses the SAME parameters for all conditions.
@@ -1393,16 +1539,75 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict, params, output_plot="accuracy_plot_all_conditions.png"; r_max=nothing, weighting_mode::Symbol=:exponential)
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+    end
+
     # Unpack SHARED parameters
-    if weighting_mode == :exponential
-        C, w_slope, A, k, t0 = params
-    elseif weighting_mode == :free
-        C, w2, w3, w4, A, k, t0 = params
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
+    contam_alpha_use = contaminant_alpha
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+    if layout === nothing
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        end
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]
+        end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+        contam_alpha_use = layout.contam_alpha_fixed
+        if use_contaminant && estimate_contaminant && !isempty(layout.idx_contam_alpha)
+            key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+            contam_alpha_use = params[layout.idx_contam_alpha[key]]
+        end
     end
 
     observed_acc = Float64[]
@@ -1423,6 +1628,11 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
 
     for cc in sorted_conditions
         condition_df = condition_data[cc]
+        cond_type = cue_condition_type_fn(cc)
+        @assert cond_type in (:single, :double) "cue_condition_type_fn must return :single or :double"
+        C_use = cond_type == :double ? C_double : C_single
+        k_use = cond_type == :double ? k_double : k_single
+        t0_use = cond_type == :double ? t0_double : t0_single
 
         # Compute r_max only if exponential weighting is requested
         if weighting_mode == :exponential
@@ -1482,15 +1692,15 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
             ws = weighting_mode == :exponential ?
                  exp.(w_slope .* rewards ./ r_max_use) :
                  [get(weight_lookup, r, default_weight) for r in rewards]
-            vs = C .* (ws ./ sum(ws))
+            vs = C_use .* (ws ./ sum(ws))
 
-            lba = LBA(ν=vs, A=A, k=k, τ=t0)
+            lba = LBA(ν=vs, A=A, k=k_use, τ=t0_use)
 
             # Compute choice probability
             pred_prob = 0.0
 
             for t in t_grid
-                if t > t0
+                if t > t0_use
                     try
                         prob = pdf(lba, (choice=target_choice, rt=t))
                         if !isnan(prob) && !isinf(prob) && prob > 0
@@ -1499,6 +1709,11 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
                     catch
                     end
                 end
+            end
+
+            if use_contaminant
+                n_opts = length(rewards)
+                pred_prob = (1 - alpha_cond) * pred_prob + alpha_cond * (1 / n_opts)
             end
 
             # Weight by number of trials
@@ -1519,9 +1734,10 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nShared Parameters Across All Conditions"
+    ylim_use = get_accuracy_ylim()
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
-             ylim=(0, 1.05), legend=:bottomright)
+             ylim=ylim_use, legend=:bottomright)
 
     x_pos = 1:length(condition_labels)
     scatter!(p, x_pos, observed_acc, label="Observed", color=:blue, markersize=10, alpha=0.8)
@@ -1538,8 +1754,9 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
     plot!(p, xticks=(x_pos, condition_labels), xrotation=45)
 
     # Add trial count annotations
+    annotate_y = ylim_use[1] + 0.02 * (ylim_use[2] - ylim_use[1])
     for (i, n) in enumerate(n_trials_per_cond)
-        annotate!(p, i, 0.05, text("n=$n", :gray, :center, 8))
+        annotate!(p, i, annotate_y, text("n=$n", :gray, :center, 8))
     end
 
     savefig(p, output_plot)
@@ -1553,6 +1770,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict, para
         println("  Mean predicted accuracy: $(round(mean_pred, digits=3))")
         println("  RMSE: $(round(rmse, digits=3))")
     end
+    return p
 end
 
 end # module

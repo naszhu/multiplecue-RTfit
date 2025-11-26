@@ -18,29 +18,19 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
+include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
 using .Config
+using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 
 # ==========================================================================
 # CONFIGURATION
 # ==========================================================================
-
-# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
-# ========================================================
-
-# ========== REWARD WEIGHTING MODE ==========
-# Set to :exponential (original θ-based) or :free (fit w2, w3, w4 with w1 fixed at 1.0)
-const WEIGHTING_MODE_OVERRIDE = nothing  # leave as `nothing` to use Config.get_weighting_mode()
-# ===========================================
-
-const OUTPUT_CSV = "model_fit_results_allconditions.csv"
-const OUTPUT_PLOT = "model_fit_plot_allconditions.png"
 
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
@@ -48,20 +38,29 @@ const OUTPUT_PLOT = "model_fit_plot_allconditions.png"
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID)
+    data_config = get_data_config(Config.PARTICIPANT_ID_ALLCONDITIONS)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
     println("Selected Participant ID: $(data_config.participant_id)")
     println("Data path: $(data_config.data_base_path)")
-    weighting_mode = isnothing(WEIGHTING_MODE_OVERRIDE) ? get_weighting_mode() : WEIGHTING_MODE_OVERRIDE
+    weighting_mode = isnothing(Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS) ? get_weighting_mode() : Config.WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS
+    vary_C_by_cue_type = Config.VARY_C_BY_CUECOUNT_ALLCONDITIONS
+    vary_t0_by_cue_type = Config.VARY_T0_BY_CUECOUNT_ALLCONDITIONS
+    vary_k_by_cue_type = Config.VARY_K_BY_CUECOUNT_ALLCONDITIONS
+    use_contam = Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS
+    estimate_contam = Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS
     println("Reward weighting mode: $weighting_mode")
+    println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
+    println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
+    println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
+    println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
 
     # Create configuration with plot display flags
-    plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
+    plot_config = get_plot_config()  # from RunFlags
 
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -88,6 +87,13 @@ function run_analysis()
         n_trials = sum(data.CueCondition .== cc)
         println("  $i. CueCondition $cc: $n_trials trials")
     end
+    known_conditions = union(Config.SINGLE_CUE_CONDITIONS, Config.DOUBLE_CUE_CONDITIONS)
+    @assert all(cc -> cc in known_conditions, cue_conditions) "Unexpected CueCondition values detected: $(setdiff(cue_conditions, collect(known_conditions)))"
+    if any(ismissing, data.CueCondition)
+        error("CueCondition column contains missing values; required for cue-type specific parameters.")
+    end
+    cue_condition_types = Config.cue_condition_type.(data.CueCondition)
+    @assert all(ct -> ct in (:single, :double), cue_condition_types) "CueCondition types must be :single or :double"
     println("\nTotal trials across all conditions: $(nrow(data))")
 
     # Step 2: Compute r_max from entire experiment (for consistent normalization)
@@ -116,30 +122,50 @@ function run_analysis()
     println("\n" * "=" ^ 70)
     println("PREPROCESSING DATA FOR OPTIMIZATION")
     println("=" ^ 70)
-    preprocessed_data = preprocess_data_for_fitting(data)
+    group_by_condition = vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type || Config.VARY_CONTAM_BY_CUE_ALLCONDITIONS
+    preprocessed_data = preprocess_data_for_fitting(data; cue_condition_types=cue_condition_types, group_by_condition=group_by_condition)
 
     # Step 4: Fit single model to ALL data at once with shared parameters
-    println("\n" * "=" ^ 70)
-    println("FITTING SINGLE LBA MODEL TO ALL CONDITIONS")
-    println("=" ^ 70)
-    println("Model type: Single LBA with SHARED parameters across all conditions")
-    if weighting_mode == :exponential
-        println("Parameters to be fitted: C, θ (w_slope), A, k, t0 (exponential weighting)")
-    else
-        println("Parameters to be fitted: C, w2, w3, w4, A, k, t0 (free weights, w1 fixed at 1.0)")
-    end
-    println("Number of conditions: $(length(cue_conditions))")
-    println("Total trials: $(nrow(data))")
-    println("Using ULTRA-FAST preprocessed data structure")
-
-    # Get parameter bounds and initial values from configuration
-    params_config = get_default_single_params(weighting_mode)
+    params_config, layout, param_names = build_allconditions_params(weighting_mode;
+        vary_C_by_cue=vary_C_by_cue_type,
+        vary_t0_by_cue=vary_t0_by_cue_type,
+        vary_k_by_cue=vary_k_by_cue_type,
+        use_contaminant=use_contam,
+        estimate_contaminant=estimate_contam,
+        vary_contam_by_cue=Config.VARY_CONTAM_BY_CUE_ALLCONDITIONS,
+        c_start_override=Config.C_START_OVERRIDE_ALLCONDITIONS)
     lower = params_config.lower
     upper = params_config.upper
     x0 = params_config.x0
-    param_names = weighting_mode == :exponential ?
-                  ["C", "w_slope", "A", "k", "t0"] :
-                  ["C", "w2", "w3", "w4", "A", "k", "t0"]
+
+    flag_tokens = String[]
+    push!(flag_tokens, weighting_mode == :free ? "wfree" : "wslope")
+    if vary_C_by_cue_type
+        push!(flag_tokens, "Ccue")
+    end
+    if vary_t0_by_cue_type
+        push!(flag_tokens, "t0cue")
+    end
+    if vary_k_by_cue_type
+        push!(flag_tokens, "kcue")
+    end
+    if use_contam
+        if estimate_contam
+            push!(flag_tokens, layout.vary_contam_by_cue ? "contamEstCue" : "contamEst")
+        else
+            push!(flag_tokens, "contam$(Int(round(Config.CONTAMINANT_ALPHA_ALLCONDITIONS*100)))")
+        end
+    end
+    flag_suffix = isempty(flag_tokens) ? "" : "_" * join(flag_tokens, "-")
+
+    println("\n" * "=" ^ 70)
+    println("FITTING SINGLE LBA MODEL TO ALL CONDITIONS")
+    println("=" ^ 70)
+    println("Model type: Single LBA with SHARED parameters across all conditions (C/t0 can vary by cue-count)")
+    println("Parameters to be fitted: $(join(param_names, ", "))")
+    println("Number of conditions: $(length(cue_conditions))")
+    println("Total trials: $(nrow(data))")
+    println("Using ULTRA-FAST preprocessed data structure")
 
     println("\n" * "-" ^ 70)
     println("OPTIMIZATION SETUP")
@@ -153,16 +179,28 @@ function run_analysis()
     println("\n" * "-" ^ 70)
     println("RUNNING OPTIMIZATION")
     println("-" ^ 70)
-    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; r_max=r_max, weighting_mode=weighting_mode)
+    objective_func = (x, d) -> mis_lba_allconditions_loglike(x, d; layout=layout, r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, contaminant_alpha=Config.CONTAMINANT_ALPHA_ALLCONDITIONS, contaminant_rt_max=Config.CONTAMINANT_RT_MAX_ALLCONDITIONS)
     result = fit_model(preprocessed_data, objective_func;
                        lower=lower, upper=upper, x0=x0, time_limit=600.0)
 
     # Get the fitted parameters
     best_params = Optim.minimizer(result)
+    contam_alpha_use = Config.CONTAMINANT_ALPHA_ALLCONDITIONS
+    contam_rtmax_use = Config.CONTAMINANT_RT_MAX_ALLCONDITIONS
+    if layout.use_contaminant && layout.estimate_contaminant
+        if !isempty(layout.idx_contam_alpha)
+            key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+            contam_alpha_use = best_params[layout.idx_contam_alpha[key]]
+        end
+        if !isempty(layout.idx_contam_rt)
+            key = haskey(layout.idx_contam_rt, :all) ? :all : :single
+            contam_rtmax_use = best_params[layout.idx_contam_rt[key]]
+        end
+    end
 
     # Print all parameters (optimized and fixed)
     println("\n" * "=" ^ 70)
-    println("FITTED PARAMETERS (SHARED ACROSS ALL CONDITIONS)")
+    println("FITTED PARAMETERS (SHARED / cue-type-specific as configured)")
     println("=" ^ 70)
 
     println("\n--- OPTIMIZED PARAMETERS (in search) ---")
@@ -234,7 +272,7 @@ function run_analysis()
 
     # Store individual plot objects and condition data
     individual_plots = []
-    condition_data_dict = Dict()
+    condition_data_dict = Dict{Any,DataFrame}()
 
     for (idx, cue_cond) in enumerate(cue_conditions)
         println("\n" * "-" ^ 70)
@@ -255,10 +293,10 @@ function run_analysis()
         condition_data_dict[cue_cond] = condition_data
 
         # Generate plot for this condition using the SHARED parameters
-        plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond).png")
+        plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(flag_suffix).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
-                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode)
+                                       cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=Config.cue_condition_type(cue_cond), use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, contaminant_rt_max=contam_rtmax_use, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
         push!(individual_plots, p)
     end
 
@@ -280,13 +318,14 @@ function run_analysis()
                             plot_title="All-Conditions Model (Shared Parameters) - Participant $(data_config.participant_id)",
                             plot_titlefontsize=18,
                             titlefontsize=14,
-                            legendfontsize=12,
-                            guidefontsize=14,
-                            tickfontsize=12,
-                            fontsize=12)
+                            legendfontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            guidefontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            tickfontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            fontsize=FittingUtils.PlottingUtils.AXIS_FONT_SIZE,
+                            ylims=FittingUtils.PlottingUtils.RT_ALLCONDITIONS_YLIM)
 
         # Save combined plot
-        combined_plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
+        combined_plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
         savefig(combined_plot, combined_plot_path)
         println("Saved combined RT fit plot to $combined_plot_path")
     end
@@ -297,22 +336,26 @@ function run_analysis()
         println("GENERATING OVERALL ACCURACY PLOT")
         println("=" ^ 70)
 
-        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
-        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode)
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+        generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=Config.cue_condition_type, use_contaminant=Config.USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, estimate_contaminant=Config.ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
     end
 
     println("\n" * "=" ^ 70)
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Participant: $(data_config.participant_id)")
-    println("Model: Single LBA with SHARED parameters across ALL conditions")
+    println("Model: Single LBA with shared parameters across ALL conditions (C/t0 cue-specific flags applied as configured)")
     println("\nResults saved to:")
     println("  - Parameters: outputdata/model_fit_results_allconditions_P$(data_config.participant_id).csv")
-    println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*.png")
-    println("  - Combined plot: images/model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
-    println("  - Accuracy plot: images/accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions.png")
-    println("\nNote: This model uses SHARED parameters (C, θ, A, k, t0) across all conditions,")
-    println("      but generates separate predictions for each condition.")
+    if SAVE_INDIVIDUAL_CONDITION_PLOTS
+        println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*$(flag_suffix).png")
+    else
+        println("  - Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
+    end
+    println("  - Combined plot: images/model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+    println("  - Accuracy plot: images/accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+    println("\nNote: This model uses shared parameters across conditions, with optional cue-count-specific C/t0 parameters.")
+    println("      Separate predictions are still generated for each condition.")
 end
 
 # ==========================================================================

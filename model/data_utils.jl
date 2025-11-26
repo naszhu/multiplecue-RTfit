@@ -12,10 +12,10 @@ using Glob
 export parse_clean_float, parse_array_string, read_psychopy_dat, load_and_process_data
 
 """
-    parse_clean_float(val)
+    parse_clean_float(val)::Union{Float64, Missing}
     Safely parses a value that might be a number, a string "1", or a bracketed string "[1]".
 """
-function parse_clean_float(val)
+function parse_clean_float(val)::Union{Float64, Missing}
     if ismissing(val) return missing end
     if isa(val, Number) return Float64(val) end
 
@@ -35,14 +35,17 @@ function parse_clean_float(val)
 end
 
 """
-    parse_array_string(str)
-    Parses "[1, 2, 3]" -> [1.0, 2.0, 3.0] or "0410" -> [0.0, 4.0, 1.0, 0.0]
+    parse_array_string(str)::Vector{Float64}
+    Parses "0410" -> [0.0, 4.0, 1.0, 0.0]
 """
-function parse_array_string(str)
+function parse_array_string(str)::Vector{Float64}
     if ismissing(str) return Float64[] end
     s = string(str)
     clean_str = replace(s, r"[\[\]\s]" => "")
     if isempty(strip(clean_str)) return Float64[] end
+
+    # Assert the string is exactly 4 characters
+    @assert length(clean_str) == 4 "Input string must be of length 4 after cleaning, got $(length(clean_str)): $clean_str"
 
     # Check if comma-separated (e.g., "1,2,3,4") or digit string (e.g., "0410")
     if occursin(",", clean_str)
@@ -54,10 +57,10 @@ function parse_array_string(str)
 end
 
 """
-    read_psychopy_dat(filepath)
+    read_psychopy_dat(filepath::String)::DataFrame
     Reads a PsychoPy .dat file, finding the correct header line.
 """
-function read_psychopy_dat(filepath)
+function read_psychopy_dat(filepath::String)::DataFrame
     # Find header line by scanning once; avoids loading whole file into memory
     header_line = nothing
     for (i, line) in enumerate(eachline(filepath))
@@ -88,11 +91,11 @@ function read_psychopy_dat(filepath)
 end
 
 """
-    load_and_process_data(path, file_pattern="*.dat")
+    load_and_process_data(path::String, file_pattern::String="*.dat")::DataFrame
     Loads and processes all data files from the specified path.
     Returns a cleaned DataFrame ready for model fitting.
 """
-function load_and_process_data(path, file_pattern="*.dat")
+function load_and_process_data(path::String, file_pattern::String="*.dat")::DataFrame
     files = glob(file_pattern, path)
     if isempty(files)
         error("No data files found in $path")

@@ -12,11 +12,15 @@ using Optim
 include("config.jl")
 using .Config
 
+# Import PreprocessedData type from the top-level ModelUtils module
+using Main.ModelUtils: PreprocessedData
+
 export fit_model
 
 """
-    fit_model(data, objective_func;
-              lower, upper, x0, time_limit=600.0, r_max=nothing)
+    fit_model(data::Union{DataFrame,PreprocessedData}, objective_func::Function;
+              lower::Vector{Float64}, upper::Vector{Float64}, x0::Vector{Float64},
+              time_limit::Union{Nothing,Float64}=nothing, r_max::Union{Nothing,Float64}=nothing)::Optim.MultivariateOptimizationResults
 
     Fits the model using optimization.
 
@@ -32,8 +36,9 @@ export fit_model
     Returns:
     - result: Optim optimization result object
 """
-function fit_model(data, objective_func;
-                   lower, upper, x0, time_limit=nothing, r_max=nothing)
+function fit_model(data::Union{DataFrame,PreprocessedData}, objective_func::Function;
+                   lower::Vector{Float64}, upper::Vector{Float64}, x0::Vector{Float64},
+                   time_limit::Union{Nothing,Float64}=nothing, r_max::Union{Nothing,Float64}=nothing)::Optim.MultivariateOptimizationResults
     println("Fitting model (this may take a minute)...")
 
     # Get optimization configuration from config file
@@ -69,8 +74,9 @@ function fit_model(data, objective_func;
 
     # L-BFGS uses less memory and often converges faster than BFGS
     # Testing showed 3x speedup with equivalent results
+    # LBA/pdf are not Dual-number friendly, so use finite-difference gradients
     res = optimize(func, lower, upper, x0, Fminbox(LBFGS()), opt_options;
-                   autodiff=:forward)
+                   autodiff=:finite)
 
     best = Optim.minimizer(res)
     println("\n--- Optimization Complete ---")

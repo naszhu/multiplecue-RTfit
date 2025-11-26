@@ -19,24 +19,19 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
+include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
 using .Config
+using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 
 # ==========================================================================
 # CONFIGURATION
 # ==========================================================================
-
-# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 2  # Options: 1, 2, or 3
-# ========================================================
-
-const OUTPUT_CSV = "model_fit_results_dual.csv"
-const OUTPUT_PLOT = "model_fit_plot_dual.png"
 
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
@@ -44,7 +39,7 @@ const OUTPUT_PLOT = "model_fit_plot_dual.png"
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID)
+    data_config = get_data_config(Config.PARTICIPANT_ID_DUAL)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
@@ -53,10 +48,10 @@ function run_analysis()
 
     # Create configuration with plot display flags
     # Set to false to disable target/distractor choice lines in plots
-    plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
+    plot_config = get_plot_config()
 
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -168,8 +163,9 @@ function run_analysis()
         # Generate plots for this condition
         plot_path = joinpath(images_dir, "model_fit_plot_dual_P$(data_config.participant_id)_condition_$(cue_cond).png")
         p = generate_plot_dual(condition_data, best_params,
-                              plot_path;
-                              cue_condition=cue_cond, r_max=r_max, config=plot_config)
+                             plot_path;
+                             cue_condition=cue_cond, r_max=r_max, config=plot_config,
+                             save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS)
         push!(individual_plots, p)
     end
     
@@ -223,19 +219,17 @@ function run_analysis()
         combined_results = vcat(all_results...)
 
         # Create outputdata subfolder if it doesn't exist
-        outputdata_dir = joinpath(@__DIR__, "outputdata")
+        outputdata_dir = dirname(Config.OUTPUT_CSV_DUAL)
         if !isdir(outputdata_dir)
             mkdir(outputdata_dir)
             println("Created outputdata directory: $outputdata_dir")
         end
 
         # Save to outputdata subfolder with participant ID
-        output_filename = "model_fit_results_dual_P$(data_config.participant_id).csv"
-        output_path = joinpath(outputdata_dir, output_filename)
-        CSV.write(output_path, combined_results)
+        CSV.write(Config.OUTPUT_CSV_DUAL, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
-        println("\nResults saved to: $output_path")
+        println("\nResults saved to: $(Config.OUTPUT_CSV_DUAL)")
     else
         println("WARNING: No results to save!")
     end
@@ -244,8 +238,12 @@ function run_analysis()
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Participant: $(data_config.participant_id)")
-    println("Combined results saved to outputdata/model_fit_results_dual_P$(data_config.participant_id).csv")
-    println("Individual condition results and plots saved with condition-specific filenames")
+    println("Combined results saved to $(Config.OUTPUT_CSV_DUAL)")
+    if SAVE_INDIVIDUAL_CONDITION_PLOTS
+        println("Individual condition results and plots saved with condition-specific filenames")
+    else
+        println("Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
+    end
     println("\nNote: This model uses TWO LBA components to capture bimodality,")
     println("      rather than LBA + express responses.")
 end
@@ -262,4 +260,3 @@ using Plots  # Needed for combining plots
 if abspath(PROGRAM_FILE) == @__FILE__
     run_analysis()
 end
-

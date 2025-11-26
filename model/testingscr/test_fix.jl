@@ -1,9 +1,8 @@
 using CSV
 using DataFrames
 using Glob
-
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
+include("../config.jl")
+using .Config
 
 # Use the fixed read function
 function read_psychopy_dat(filepath)
@@ -29,7 +28,7 @@ function read_psychopy_dat(filepath)
 end
 
 # Test with all files
-files = glob(FILE_PATTERN, DATA_PATH)
+files = glob(Config.FILE_PATTERN, Config.DATA_PATH)
 println("Found $(length(files)) files")
 
 total_rows = 0

@@ -17,24 +17,19 @@ using Pkg
 # Load utility modules
 include("data_utils.jl")
 include("model_utils.jl")
-include("fitting_utils.jl")
 include("config.jl")
+include("run_flags.jl")
+include("fitting_utils.jl")
 
 using .DataUtils
 using .ModelUtils
 using .FittingUtils
 using .Config
+using .RunFlags: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
 
 # ==========================================================================
 # CONFIGURATION
 # ==========================================================================
-
-# ========== CHANGE THIS TO SELECT PARTICIPANT ==========
-const PARTICIPANT_ID = 3  # Options: 1, 2, or 3
-# ========================================================
-
-const OUTPUT_CSV = "model_fit_results_single.csv"
-const OUTPUT_PLOT = "model_fit_plot_single.png"
 
 # ==========================================================================
 # MAIN ANALYSIS FUNCTION
@@ -42,7 +37,7 @@ const OUTPUT_PLOT = "model_fit_plot_single.png"
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID)
+    data_config = get_data_config(Config.PARTICIPANT_ID_SINGLE)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
@@ -50,10 +45,10 @@ function run_analysis()
     println("Data path: $(data_config.data_base_path)")
 
     # Create configuration with plot display flags
-    plot_config = ModelConfig(false, false)  # show_target_choice, show_distractor_choice
+    plot_config = get_plot_config()
 
     # Create images subfolder if it doesn't exist
-    images_dir = joinpath(@__DIR__, "images")
+    images_dir = Config.IMAGES_DIR
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -183,7 +178,8 @@ function run_analysis()
         plot_path = joinpath(images_dir, "model_fit_plot_single_P$(data_config.participant_id)_condition_$(cue_cond).png")
         p = generate_plot_single(condition_data, best_params,
                               plot_path;
-                              cue_condition=cue_cond, r_max=r_max, config=plot_config)
+                              cue_condition=cue_cond, r_max=r_max, config=plot_config,
+                              save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS)
         push!(individual_plots, p)
     end
 
@@ -235,19 +231,17 @@ function run_analysis()
         combined_results = vcat(all_results...)
 
         # Create outputdata subfolder if it doesn't exist
-        outputdata_dir = joinpath(@__DIR__, "outputdata")
+        outputdata_dir = dirname(Config.OUTPUT_CSV_SINGLE)
         if !isdir(outputdata_dir)
             mkdir(outputdata_dir)
             println("Created outputdata directory: $outputdata_dir")
         end
 
         # Save to outputdata subfolder with participant ID
-        output_filename = "model_fit_results_single_P$(data_config.participant_id).csv"
-        output_path = joinpath(outputdata_dir, output_filename)
-        CSV.write(output_path, combined_results)
+        CSV.write(Config.OUTPUT_CSV_SINGLE, combined_results)
         println("\nCombined fitted parameters:")
         println(combined_results)
-        println("\nResults saved to: $output_path")
+        println("\nResults saved to: $(Config.OUTPUT_CSV_SINGLE)")
     else
         println("WARNING: No results to save!")
     end
@@ -256,8 +250,12 @@ function run_analysis()
     println("ANALYSIS COMPLETE")
     println("=" ^ 70)
     println("Participant: $(data_config.participant_id)")
-    println("Combined results saved to outputdata/model_fit_results_single_P$(data_config.participant_id).csv")
-    println("Individual condition results and plots saved with condition-specific filenames")
+    println("Combined results saved to $(Config.OUTPUT_CSV_SINGLE)")
+    if SAVE_INDIVIDUAL_CONDITION_PLOTS
+        println("Individual condition results and plots saved with condition-specific filenames")
+    else
+        println("Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
+    end
     println("\nNote: This model uses a single LBA component (no mixture).")
 end
 

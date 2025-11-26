@@ -5,18 +5,17 @@
 
 include("data_utils.jl")
 using .DataUtils
+include("../config.jl")
+using .Config
 using Statistics
 using Plots
-
-const DATA_PATH = joinpath("..", "data", "ParticipantCPP002-003", "ParticipantCPP002-003")
-const FILE_PATTERN = "*.dat"
 
 println("=" ^ 70)
 println("LOADING DATA FOR RT ANALYSIS")
 println("=" ^ 70)
 
 # Load the data
-data = load_and_process_data(DATA_PATH, FILE_PATTERN)
+data = load_and_process_data(Config.DATA_PATH, Config.FILE_PATTERN)
 
 println("\n" * "=" ^ 70)
 println("RT DISTRIBUTION STATISTICS")
