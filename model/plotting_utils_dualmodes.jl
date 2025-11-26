@@ -92,10 +92,14 @@ function mixture_rt_plot(data::DataFrame, params::Vector{<:Real}, layout; cue_co
         y_slow ./= total_w
     end
 
-    p = plot(kde_grid, kde_dens, label="Observed", color=:blue, lw=2, xlabel="RT (s)", ylabel="Density", title="Cue $cue_condition", legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE)
+    # Scale individual mode curves by their mixture weights so they reflect their contribution
+    y_fast_weighted = pi_use .* y_fast
+    y_slow_weighted = (1 - pi_use) .* y_slow
+
+    p = plot(kde_grid, kde_dens, label="Observed", color=:blue, lw=2, xlabel="RT (s)", ylabel="Density", title="Cue $cue_condition", legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE, ylim=(0.0,10.0), xlim=(0.0,0.8))
     plot!(p, t_grid, y_mix, label="Mixture RT", color=:red, lw=3)
-    plot!(p, t_grid, y_fast, label="Fast LBA", color=:green, lw=2, linestyle=:dash)
-    plot!(p, t_grid, y_slow, label="Slow LBA", color=:orange, lw=2, linestyle=:dash)
+    plot!(p, t_grid, y_fast_weighted, label="Fast LBA (weighted)", color=:green, lw=2, linestyle=:dash)
+    plot!(p, t_grid, y_slow_weighted, label="Slow LBA (weighted)", color=:orange, lw=2, linestyle=:dash)
     return p
 end
 
