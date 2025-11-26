@@ -965,6 +965,15 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
         total_trials = 0
         total_pred_prob = 0.0
         total_weight = 0.0
+        alpha_cond = if use_contaminant
+            if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cond_type)
+                params[layout.idx_contam_alpha[cond_type]]
+            else
+                contam_alpha_use
+            end
+        else
+            0.0
+        end
 
         for (key, group) in reward_groups
             rewards = group["rewards"]
@@ -1246,43 +1255,107 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single)::Plots.Plot
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
-    # Unpack parameters based on weighting mode
-    p_idx = 1
-    C_single = params[p_idx]; p_idx += 1
-    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
-    p_idx += vary_C_by_cue_type ? 1 : 0
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+    end
+
+    # Unpack parameters based on weighting mode / layout
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
-    k_single = 0.0
-    k_double = 0.0
-    if weighting_mode == :exponential
-        w_slope = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-    elseif weighting_mode == :free
-        w2 = params[p_idx]; p_idx += 1
-        w3 = params[p_idx]; p_idx += 1
-        w4 = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+    contam_alpha_use = contaminant_alpha
+    contam_rt_use = contaminant_rt_max
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+    if layout === nothing
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        end
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]; p_idx += 1
+            contam_rt_use = params[p_idx]; p_idx += 1
+        end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+        contam_alpha_use = layout.contam_alpha_fixed
+        contam_rt_use = layout.contam_rt_fixed
+        if use_contaminant && estimate_contaminant
+            if !isempty(layout.idx_contam_alpha)
+                key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+                contam_alpha_use = params[layout.idx_contam_alpha[key]]
+            end
+            if !isempty(layout.idx_contam_rt)
+                key = haskey(layout.idx_contam_rt, :all) ? :all : :single
+                contam_rt_use = params[layout.idx_contam_rt[key]]
+            end
+        end
     end
     @assert cue_condition_type in (:single, :double) "cue_condition_type must be :single or :double"
     C_use = cue_condition_type == :double ? C_double : C_single
     k_use = cue_condition_type == :double ? k_double : k_single
     t0_use = cue_condition_type == :double ? t0_double : t0_single
+    contam_alpha_cond = if use_contaminant
+        if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cue_condition_type)
+            params[layout.idx_contam_alpha[cue_condition_type]]
+        else
+            contam_alpha_use
+        end
+    else
+        0.0
+    end
+    contam_rt_cond = if use_contaminant
+        if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_rt, cue_condition_type)
+            params[layout.idx_contam_rt[cue_condition_type]]
+        else
+            contam_rt_use
+        end
+    else
+        1.0
+    end
 
     # Create title
     title_str = "Single LBA Fit (Shared Parameters Across All Conditions)"
@@ -1402,7 +1475,12 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
                 end
             end
 
-            # Accumulate weighted
+            if use_contaminant
+                lba_dens = (1 - contam_alpha_cond) * lba_dens + contam_alpha_cond * (1 / contam_rt_cond)
+                lba_target_dens *= (1 - contam_alpha_cond)
+                lba_distractor_dens *= (1 - contam_alpha_cond)
+            end
+
             y_pred_total[j] += weight * lba_dens
             y_pred_target[j] += weight * lba_target_dens
             y_pred_distractor[j] += weight * lba_distractor_dens
@@ -1461,38 +1539,75 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single)::Plots.Plot
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+    end
+
     # Unpack SHARED parameters
-    p_idx = 1
-    C_single = params[p_idx]; p_idx += 1
-    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
-    p_idx += vary_C_by_cue_type ? 1 : 0
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
-    k_single = 0.0
-    k_double = 0.0
-    if weighting_mode == :exponential
-        w_slope = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-    elseif weighting_mode == :free
-        w2 = params[p_idx]; p_idx += 1
-        w3 = params[p_idx]; p_idx += 1
-        w4 = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+    contam_alpha_use = contaminant_alpha
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+    if layout === nothing
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        end
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]
+        end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+        contam_alpha_use = layout.contam_alpha_fixed
+        if use_contaminant && estimate_contaminant && !isempty(layout.idx_contam_alpha)
+            key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+            contam_alpha_use = params[layout.idx_contam_alpha[key]]
+        end
     end
 
     observed_acc = Float64[]
@@ -1594,6 +1709,11 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
                     catch
                     end
                 end
+            end
+
+            if use_contaminant
+                n_opts = length(rewards)
+                pred_prob = (1 - alpha_cond) * pred_prob + alpha_cond * (1 / n_opts)
             end
 
             # Weight by number of trials

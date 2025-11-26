@@ -10,6 +10,7 @@ using Distributions
 using SequentialSamplingModels
 
 export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike, mis_lba_single_loglike, mis_lba_allconditions_loglike
+export mis_lba_dualmodes_loglike
 export PreprocessedData, preprocess_data_for_fitting
 
 """
@@ -27,6 +28,202 @@ struct PreprocessedData
     n_trials::Int
 end
 
+# ==========================================================================
+# Dual-mode (two LBA) mixture with shared weights, flexible variation
+# ==========================================================================
+function _build_cond_types(df::DataFrame, provided)::Vector{Symbol}
+    if !isnothing(provided)
+        return provided
+    end
+    if !("CueCondition" in names(df))
+        error("CueCondition column required for dual-mode mixture.")
+    end
+    return [if cc in (1,2,3,4) :single elseif cc in (5,6,7,8,9,10) :double else error("Unexpected CueCondition $cc") end for cc in df.CueCondition]
+end
+
+cue_key(flag, cond_type) = flag ? cond_type : :all
+mode_key(flag, mode) = flag ? mode : :shared
+
+function _fetch_param(params, dict, vary_mode::Bool, vary_cue::Bool, mode::Symbol, cue::Symbol)
+    return params[dict[mode_key(vary_mode, mode)][cue_key(vary_cue, cue)]]
+end
+
+function _weight_components(params, layout, r_max, rewards)
+    if layout.weighting_mode == :exponential
+        w_slope = params[layout.idx_w[:w_slope]]
+        r_use = isnothing(r_max) ? 4.0 : r_max
+        w_slope_normalized = w_slope / r_use
+        weights = exp.(w_slope_normalized .* rewards)
+        return weights, nothing, 0.0
+    else
+        w2 = params[layout.idx_w[:w2]]
+        w3 = params[layout.idx_w[:w3]]
+        w4 = params[layout.idx_w[:w4]]
+        if w2<=0 || w3<=0 || w4<=0
+            return nothing, nothing, 0.0
+        end
+        weight_lookup = Dict{Float64, Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10)
+        default_weight = weight_lookup[0.0]
+        return nothing, weight_lookup, default_weight
+    end
+end
+
+function _get_weights_for_rewards(weighting_mode, w_slope_normalized, weight_lookup, default_weight, rewards)
+    if weighting_mode == :exponential
+        return exp.(w_slope_normalized .* rewards)
+    else
+        return [get(weight_lookup, r, default_weight) for r in rewards]
+    end
+end
+
+function mis_lba_dualmodes_loglike(params::Vector{<:Real}, df::DataFrame, layout; cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, r_max::Union{Nothing,Float64}=nothing)::Float64
+    cond_types = _build_cond_types(df, cue_condition_types)
+
+    weights_expo, weight_lookup, default_weight = _weight_components(params, layout, r_max, df.ParsedRewards[1])
+    weighting_mode = layout.weighting_mode
+    w_slope_normalized = weighting_mode == :exponential ? (params[layout.idx_w[:w_slope]] / (isnothing(r_max) ? 4.0 : r_max)) : 0.0
+
+    drift_cache_fast = Dict{Tuple{Vararg{Float64}}, Any}()
+    drift_cache_slow = Dict{Tuple{Vararg{Float64}}, Any}()
+
+    total_neg_ll = 0.0
+    for i in 1:nrow(df)
+        cond = cond_types[i]
+        C_fast = _fetch_param(params, layout.idx_C, layout.vary_C_by_mode, layout.vary_C_by_cue, :fast, cond)
+        C_slow = _fetch_param(params, layout.idx_C, layout.vary_C_by_mode, layout.vary_C_by_cue, :slow, cond)
+        k_fast = _fetch_param(params, layout.idx_k, layout.vary_k_by_mode, layout.vary_k_by_cue, :fast, cond)
+        k_slow = _fetch_param(params, layout.idx_k, layout.vary_k_by_mode, layout.vary_k_by_cue, :slow, cond)
+        A_use  = _fetch_param(params, layout.idx_A, layout.vary_A_by_mode, layout.vary_A_by_cue, :shared, cond)
+        t0_use = _fetch_param(params, layout.idx_t0, layout.vary_t0_by_mode, layout.vary_t0_by_cue, :shared, cond)
+        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || A_use<=0 || t0_use<=0 || t0_use<0.01
+            return Inf
+        end
+
+        rewards = df.ParsedRewards[i]; key = Tuple(rewards)
+        if haskey(drift_cache_fast, key)
+            drift_fast = drift_cache_fast[key]; drift_slow = drift_cache_slow[key]
+        else
+            weights = weighting_mode==:exponential ? exp.(w_slope_normalized .* rewards) : [get(weight_lookup, r, default_weight) for r in rewards]
+            rel_weights = weights ./ sum(weights)
+            drift_fast = C_fast .* rel_weights
+            drift_slow = C_slow .* rel_weights
+            drift_cache_fast[key] = drift_fast; drift_cache_slow[key] = drift_slow
+        end
+
+        lba_fast = LBA(ν=drift_fast, A=A_use, k=k_fast, τ=t0_use)
+        lba_slow = LBA(ν=drift_slow, A=A_use, k=k_slow, τ=t0_use)
+        rt = df.CleanRT[i]; choice = df.Choice[i]
+        lik_fast = (rt>t0_use) ? try
+                val = pdf(lba_fast,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+            catch; 1e-10 end : 1e-10
+        lik_slow = (rt>t0_use) ? try
+                val = pdf(lba_slow,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+            catch; 1e-10 end : 1e-10
+
+        pi_key = layout.vary_pi_by_cue ? cond : :all
+        pi_fast = params[layout.idx_pi[pi_key]]
+        if pi_fast<0 || pi_fast>1 return Inf end
+
+        lik = pi_fast*lik_fast + (1-pi_fast)*lik_slow
+
+        if layout.use_contaminant && layout.estimate_contaminant
+            mkeyα = layout.vary_contam_alpha_by_mode ? :fast : :shared
+            ckeyα = layout.vary_contam_alpha_by_cue ? cond : :all
+            alpha = params[layout.idx_contam_alpha[mkeyα][ckeyα]]
+            mkeyr = layout.vary_contam_rt_by_mode ? :fast : :shared
+            ckeyr = layout.vary_contam_rt_by_cue ? cond : :all
+            rtmax = params[layout.idx_contam_rt[mkeyr][ckeyr]]
+            if alpha<0 || alpha>0.5 || rtmax<=0 return Inf end
+            lik = (1-alpha)*lik + alpha*(1/rtmax)
+        elseif layout.use_contaminant
+            lik = (1-layout.contam_alpha_fixed)*lik + layout.contam_alpha_fixed*(1/layout.contam_rt_fixed)
+        end
+
+        if lik <= 1e-20 lik = 1e-20 end
+        total_neg_ll -= log(lik)
+    end
+    return total_neg_ll
+end
+
+function mis_lba_dualmodes_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData, layout; cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, r_max::Union{Nothing,Float64}=nothing)::Float64
+    cond_types = isnothing(cue_condition_types) ? preprocessed.group_condition_types : cue_condition_types
+    weighting_mode = layout.weighting_mode
+
+    w_slope_normalized = 0.0
+    weight_lookup = nothing
+    default_weight = 1e-10
+    if weighting_mode == :exponential
+        r_use = isnothing(r_max) ? 4.0 : r_max
+        w_slope_normalized = params[layout.idx_w[:w_slope]] / r_use
+    else
+        w2 = params[layout.idx_w[:w2]]
+        w3 = params[layout.idx_w[:w3]]
+        w4 = params[layout.idx_w[:w4]]
+        if w2<=0 || w3<=0 || w4<=0
+            return Inf
+        end
+        weight_lookup = Dict{Float64,Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10)
+        default_weight = weight_lookup[0.0]
+    end
+
+    total_neg_ll = 0.0
+    for (idx, rewards) in enumerate(preprocessed.unique_rewards)
+        trial_indices = preprocessed.trial_groups[idx]
+        cond = cond_types[idx]
+
+        C_fast = params[layout.idx_C[mode_key(layout.vary_C_by_mode,:fast)][cue_key(layout.vary_C_by_cue,cond)]]
+        C_slow = params[layout.idx_C[mode_key(layout.vary_C_by_mode,:slow)][cue_key(layout.vary_C_by_cue,cond)]]
+        k_fast = params[layout.idx_k[mode_key(layout.vary_k_by_mode,:fast)][cue_key(layout.vary_k_by_cue,cond)]]
+        k_slow = params[layout.idx_k[mode_key(layout.vary_k_by_mode,:slow)][cue_key(layout.vary_k_by_cue,cond)]]
+        A_use  = params[layout.idx_A[mode_key(layout.vary_A_by_mode,:shared)][cue_key(layout.vary_A_by_cue,cond)]]
+        t0_use = params[layout.idx_t0[mode_key(layout.vary_t0_by_mode,:shared)][cue_key(layout.vary_t0_by_cue,cond)]]
+        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || A_use<=0 || t0_use<=0 || t0_use<0.01
+            return Inf
+        end
+
+        weights = weighting_mode==:exponential ? exp.(w_slope_normalized .* rewards) : [get(weight_lookup, r, default_weight) for r in rewards]
+        rel_weights = weights ./ sum(weights)
+        drift_fast = C_fast .* rel_weights
+        drift_slow = C_slow .* rel_weights
+
+        lba_fast = LBA(ν=drift_fast, A=A_use, k=k_fast, τ=t0_use)
+        lba_slow = LBA(ν=drift_slow, A=A_use, k=k_slow, τ=t0_use)
+
+        pi_key = layout.vary_pi_by_cue ? cond : :all
+        pi_fast = params[layout.idx_pi[pi_key]]
+        if pi_fast<0 || pi_fast>1
+            return Inf
+        end
+
+        contam_alpha = layout.contam_alpha_fixed
+        contam_rt = layout.contam_rt_fixed
+        if layout.use_contaminant && layout.estimate_contaminant
+            contam_alpha = params[layout.idx_contam_alpha[mode_key(layout.vary_contam_alpha_by_mode,:shared)][cue_key(layout.vary_contam_alpha_by_cue,cond)]]
+            contam_rt = params[layout.idx_contam_rt[mode_key(layout.vary_contam_rt_by_mode,:shared)][cue_key(layout.vary_contam_rt_by_cue,cond)]]
+            if contam_alpha<0 || contam_alpha>0.5 || contam_rt<=0
+                return Inf
+            end
+        end
+
+        for trial_idx in trial_indices
+            rt = preprocessed.rts[trial_idx]
+            choice = preprocessed.choices[trial_idx]
+            lik_fast = (rt>t0_use) ? try
+                    val = pdf(lba_fast,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+                catch; 1e-10 end : 1e-10
+            lik_slow = (rt>t0_use) ? try
+                    val = pdf(lba_slow,(choice=choice, rt=rt)); (isnan(val)||isinf(val)) ? 1e-10 : val
+                catch; 1e-10 end : 1e-10
+            lik = pi_fast*lik_fast + (1-pi_fast)*lik_slow
+            if layout.use_contaminant
+                lik = (1-contam_alpha)*lik + contam_alpha*(1/contam_rt)
+            end
+            if lik <= 1e-20 lik = 1e-20 end
+            total_neg_ll -= log(lik)
+        end
+    end
+    return total_neg_ll
+end
 """
     preprocess_data_for_fitting(df::DataFrame)::PreprocessedData
 
@@ -361,15 +558,25 @@ function mis_lba_single_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Un
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, use_contaminant::Bool=false, estimate_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
 
     Computes the negative log-likelihood for a single LBA model fitted to ALL conditions at once.
     Allows optional variation of C and/or t0 by single vs double cue conditions.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing)::Float64
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; layout=nothing, r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_types::Union{Nothing,Vector{Symbol}}=nothing, use_contaminant::Bool=false, estimate_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+    end
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+
     # Derive cue-condition types if needed
     cond_types = nothing
-    if vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type
+    if vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type || (use_contaminant && (estimate_contaminant || vary_contam_by_cue))
         if isnothing(cue_condition_types)
             if !("CueCondition" in names(df))
                 error("CueCondition column required to vary parameters by cue condition.")
@@ -394,41 +601,96 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
         end
     end
 
+    # Helper to select cue-specific parameters
+    get_by_cue(map, ct) = haskey(map, ct) ? params[map[ct]] : params[map[:all]]
+
     # Unpack parameters and constraints based on weighting_mode
-    p_idx = 1
-    C_single = params[p_idx]; p_idx += 1
-    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
-    p_idx += vary_C_by_cue_type ? 1 : 0
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
-    k_single = 0.0
-    k_double = 0.0
-    if weighting_mode == :exponential
-        w_slope = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-        if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
-            return Inf
+    if layout === nothing
+        # Fallback to positional parsing for legacy callers
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        w_slope = 0.0
+        w2 = w3 = w4 = 0.0
+        k_single = 0.0
+        k_double = 0.0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
         end
-    elseif weighting_mode == :free
-        w2 = params[p_idx]; p_idx += 1
-        w3 = params[p_idx]; p_idx += 1
-        w4 = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-        if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
-            return Inf
+
+        # Optional contaminant parameters from search
+        contam_alpha_use = contaminant_alpha
+        contam_rt_max_use = contaminant_rt_max
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]; p_idx += 1
+            contam_rt_max_use = params[p_idx]; p_idx += 1
+            if contam_alpha_use < 0.0 || contam_alpha_use > 0.5 || contam_rt_max_use <= 0.1
+                return Inf
+            end
         end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+
+        # C/k/t0 retrieval
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+
+        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
+            return Inf
+        end
+
+        contam_alpha_use = layout.contam_alpha_fixed
+        contam_rt_max_use = layout.contam_rt_fixed
+        if use_contaminant && estimate_contaminant
+            if !isempty(layout.idx_contam_alpha)
+                contam_alpha_use = get_by_cue(layout.idx_contam_alpha, :single)
+            end
+            if !isempty(layout.idx_contam_rt)
+                contam_rt_max_use = get_by_cue(layout.idx_contam_rt, :single)
+            end
+        end
     end
 
     total_neg_ll = 0.0
@@ -506,6 +768,13 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
             lik = 1e-10
         end
 
+        if use_contaminant
+            alpha_use = layout === nothing ? contam_alpha_use : (estimate_contaminant && vary_contam_by_cue && !isnothing(cond_types) && haskey(layout.idx_contam_alpha, cond_type) ? params[layout.idx_contam_alpha[cond_type]] : contam_alpha_use)
+            rtmax_use = layout === nothing ? contaminant_rt_max : (estimate_contaminant && vary_contam_by_cue && !isnothing(cond_types) && haskey(layout.idx_contam_rt, cond_type) ? params[layout.idx_contam_rt[cond_type]] : contam_rt_max_use)
+            uniform_density = 1.0 / rtmax_use
+            lik = (1 - alpha_use) * lik + alpha_use * uniform_density
+        end
+
         if lik <= 1e-20 lik = 1e-20 end
         total_neg_ll -= log(lik)
     end
@@ -514,46 +783,107 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; r_
 end
 
 """
-    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false)::Float64
+    mis_lba_allconditions_loglike(params::Vector{Float64}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, use_contaminant::Bool=false, estimate_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
 
 Ultra-fast likelihood computation using preprocessed data (method overload).
 Computes drift rates only once per unique reward configuration.
 This version is 3-5x faster than the DataFrame version.
 """
-function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false)::Float64
+function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData; layout=nothing, r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, use_contaminant::Bool=false, estimate_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)::Float64
+    if layout !== nothing
+        weighting_mode = layout.weighting_mode
+        vary_C_by_cue_type = layout.vary_C_by_cue
+        vary_t0_by_cue_type = layout.vary_t0_by_cue
+        vary_k_by_cue_type = layout.vary_k_by_cue
+        use_contaminant = layout.use_contaminant
+        estimate_contaminant = layout.estimate_contaminant
+    end
+    vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
+
     # Unpack parameters and constraints based on weighting_mode
-    p_idx = 1
-    C_single = params[p_idx]; p_idx += 1
-    C_double = vary_C_by_cue_type ? params[p_idx] : C_single
-    p_idx += vary_C_by_cue_type ? 1 : 0
-    k_single = 0.0
-    k_double = 0.0
-    if weighting_mode == :exponential
-        w_slope = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-        if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
-            return Inf
+    w_slope = 0.0
+    w2 = w3 = w4 = 0.0
+    if layout === nothing
+        p_idx = 1
+        C_single = params[p_idx]; p_idx += 1
+        C_double = vary_C_by_cue_type ? params[p_idx] : C_single
+        p_idx += vary_C_by_cue_type ? 1 : 0
+        k_single = 0.0
+        k_double = 0.0
+        if weighting_mode == :exponential
+            w_slope = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
+        elseif weighting_mode == :free
+            w2 = params[p_idx]; p_idx += 1
+            w3 = params[p_idx]; p_idx += 1
+            w4 = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
+        else
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
         end
-    elseif weighting_mode == :free
-        w2 = params[p_idx]; p_idx += 1
-        w3 = params[p_idx]; p_idx += 1
-        w4 = params[p_idx]; p_idx += 1
-        A = params[p_idx]; p_idx += 1
-        k_single = params[p_idx]; p_idx += 1
-        k_double = vary_k_by_cue_type ? params[p_idx] : k_single
-        p_idx += vary_k_by_cue_type ? 1 : 0
-        t0_single = params[p_idx]; p_idx += 1
-        t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-        if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
-            return Inf
+
+        contam_alpha_use = contaminant_alpha
+        contam_rt_max_use = contaminant_rt_max
+        if use_contaminant && estimate_contaminant
+            contam_alpha_use = params[p_idx]; p_idx += 1
+            contam_rt_max_use = params[p_idx]; p_idx += 1
+            if contam_alpha_use < 0.0 || contam_alpha_use > 0.5 || contam_rt_max_use <= 0.1
+                return Inf
+            end
         end
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+        if weighting_mode == :exponential
+            w_slope = params[layout.idx_w[:w_slope]]
+        else
+            w2 = params[layout.idx_w[:w2]]
+            w3 = params[layout.idx_w[:w3]]
+            w4 = params[layout.idx_w[:w4]]
+        end
+        A = params[layout.idx_A]
+
+        getC(ct) = haskey(layout.idx_C, ct) ? params[layout.idx_C[ct]] : params[layout.idx_C[:all]]
+        getk(ct) = haskey(layout.idx_k, ct) ? params[layout.idx_k[ct]] : params[layout.idx_k[:all]]
+        gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
+
+        C_single = getC(:single)
+        C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
+        k_single = getk(:single)
+        k_double = haskey(layout.idx_k, :double) ? getk(:double) : k_single
+        t0_single = gett0(:single)
+        t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
+
+        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
+            return Inf
+        end
+
+        contam_alpha_use = layout.contam_alpha_fixed
+        contam_rt_max_use = layout.contam_rt_fixed
+        if use_contaminant && estimate_contaminant
+            if !isempty(layout.idx_contam_alpha)
+                cue_key = haskey(layout.idx_contam_alpha, :all) ? :all : :single
+                contam_alpha_use = params[layout.idx_contam_alpha[cue_key]]
+            end
+            if !isempty(layout.idx_contam_rt)
+                cue_key = haskey(layout.idx_contam_rt, :all) ? :all : :single
+                contam_rt_max_use = params[layout.idx_contam_rt[cue_key]]
+            end
+        end
     end
 
     # r_max is only used for exponential mode
@@ -584,7 +914,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
     @inbounds for (idx, rewards) in enumerate(preprocessed.unique_rewards)
         trial_indices = preprocessed.trial_groups[idx]
         cond_type = preprocessed.group_condition_types[idx]
-        if (vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type) && cond_type in (:all, :mixed)
+        if (vary_C_by_cue_type || vary_t0_by_cue_type || vary_k_by_cue_type || vary_contam_by_cue) && cond_type in (:all, :mixed)
             error("Preprocessed data missing cue-condition grouping. Call preprocess_data_for_fitting with group_by_condition=true.")
         end
         cond_type_use = cond_type == :all ? :single : cond_type
@@ -616,6 +946,25 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
                 end
             else
                 lik = 1e-10
+            end
+
+            if use_contaminant
+                alpha_use = if layout === nothing
+                    contam_alpha_use
+                elseif estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cond_type_use)
+                    params[layout.idx_contam_alpha[cond_type_use]]
+                else
+                    contam_alpha_use
+                end
+                rtmax_use = if layout === nothing
+                    contam_rt_max_use
+                elseif estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_rt, cond_type_use)
+                    params[layout.idx_contam_rt[cond_type_use]]
+                else
+                    contam_rt_max_use
+                end
+                uniform_density = 1.0 / rtmax_use
+                lik = (1 - alpha_use) * lik + alpha_use * uniform_density
             end
 
             if lik <= 1e-20 lik = 1e-20 end
