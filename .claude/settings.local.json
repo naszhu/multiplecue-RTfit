@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(julia -e:*)",
+      "Bash(julia test_data_reading.jl:*)",
+      "Bash(timeout 30 julia:*)",
+      "Bash(timeout 60 julia:*)",
+      "Bash(timeout 90 julia:*)",
+      "Bash(timeout 120 julia:*)",
+      "Bash(cat:*)",
+      "Bash(julia fit-mis-model.jl:*)",
+      "Bash(julia fit-mis-model-modular.jl:*)",
+      "Bash(julia analyze_rt_distribution.jl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(xargs cat:*)",
+      "Bash(timeout 180 julia:*)",
+      "Bash(timeout 300 julia:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
