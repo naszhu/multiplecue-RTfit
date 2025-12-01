@@ -24,7 +24,7 @@ ModelConfig() = ModelConfig(SHOW_TARGET_CHOICE_IN_PLOTS, SHOW_DISTRACTOR_CHOICE_
 get_plot_config()::ModelConfig = ModelConfig()
 
 # Participant / IO
-const PARTICIPANT_ID_DUALMODES = 3
+const PARTICIPANT_ID_DUALMODES = 2
 const OUTPUT_CSV_DUALMODES = joinpath(@__DIR__, "outputdata", "model_fit_results_dualmodes_P$(PARTICIPANT_ID_DUALMODES).csv")
 const OUTPUT_PLOT_DUALMODES = "model_fit_plot_dualmodes.png"
 
@@ -45,7 +45,7 @@ const VARY_A_BY_CUE = false
 
 const VARY_PI_BY_CUE = false  # mixture between LBAs varies by cue condition
 
-# Contaminant flags
+# Contaminant flags, if use contamination or not
 const USE_CONTAMINANT = false
 const ESTIMATE_CONTAMINANT = false
 const VARY_CONTAM_ALPHA_BY_MODE = false
