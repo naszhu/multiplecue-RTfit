@@ -39,9 +39,10 @@ struct DataConfig
 end
 
 const DATA_BASE_DIR_PRW = joinpath(@__DIR__, "..", "data")
-const DATA_PATH_PRW = joinpath(DATA_BASE_DIR_PRW, "ParticipantCPP002-003", "ParticipantCPP002-003")
 const FILE_PATTERN_PRW = "*.dat"
 const PARTICIPANT_ID_PRW = 1
+const PARTICIPANT_FOLDER_PRW = "ParticipantCPP002-00$(PARTICIPANT_ID_PRW)"
+const DATA_PATH_PRW = joinpath(DATA_BASE_DIR_PRW, PARTICIPANT_FOLDER_PRW, PARTICIPANT_FOLDER_PRW)
 
 function get_data_config_prw(participant_id::Int=PARTICIPANT_ID_PRW)::DataConfig
     return DataConfig(participant_id, DATA_PATH_PRW, FILE_PATTERN_PRW)
