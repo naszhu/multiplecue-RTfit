@@ -66,7 +66,7 @@ end
 Plot observed RT KDE for a condition and overlay PRW predicted PDF (all choices).
 Returns the Plots.Plot object.
 """
-function generate_prw_condition_plot(df::DataFrame, params, layout; r_max::Float64=4.0, max_steps::Int=60, output_path::Union{Nothing,String}=nothing)
+function generate_prw_condition_plot(df::DataFrame, params, layout; r_max::Float64=4.0, max_steps::Int=60, output_path::Union{Nothing,String}=nothing, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)
     cond_type = first(ConfigPRW.cue_condition_type_prw.(df.CueCondition))
     C_use = cond_type == :double && haskey(layout.idx_C, :double) ? params[layout.idx_C[:double]] : params[layout.idx_C[haskey(layout.idx_C, :all) ? :all : :single]]
     k_use = cond_type == :double && haskey(layout.idx_k, :double) ? params[layout.idx_k[:double]] : params[layout.idx_k[haskey(layout.idx_k, :all) ? :all : :single]]
@@ -102,6 +102,9 @@ function generate_prw_condition_plot(df::DataFrame, params, layout; r_max::Float
                 dens_c += p_floor * PRWModel.prw_pdf_point(t, t0_use, C_use, abs_floor, c)
                 dens_c += p_ceil * PRWModel.prw_pdf_point(t, t0_use, C_use, abs_ceil, c)
             end
+            if use_contaminant
+                dens_c = (1 - contaminant_alpha) * dens_c + contaminant_alpha * (1 / contaminant_rt_max)
+            end
             pred_pdf[j] += weight * dens_c
         end
     end
@@ -126,7 +129,7 @@ end
 
 Observed vs predicted accuracy per cue condition for PRW.
 """
-function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{Any,DataFrame}, params, layout; r_max::Float64=4.0, max_steps::Int=60, output_plot::String="accuracy_plot_prw.png")
+function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{Any,DataFrame}, params, layout; r_max::Float64=4.0, max_steps::Int=60, output_plot::String="accuracy_plot_prw.png", use_contaminant::Bool=false, contaminant_alpha::Float64=0.0)
     observed_acc = Float64[]
     predicted_acc = Float64[]
     labels = String[]
@@ -171,6 +174,9 @@ function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{A
             step_probs = ws ./ sum(ws)
             abs_floor, abs_ceil, p_floor, p_ceil = _compute_abs_cache(step_probs, k_use, max_steps)
             p_choice = p_floor * sum(abs_floor[:, target_choice]) + p_ceil * sum(abs_ceil[:, target_choice])
+            if use_contaminant
+                p_choice = (1 - contaminant_alpha) * p_choice + contaminant_alpha * (1 / length(rewards))
+            end
             acc_pred_weighted += count * p_choice
             total_weight += count
         end

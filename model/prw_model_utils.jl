@@ -143,7 +143,10 @@ Supports cue-type specific C/k/t0 through the provided `layout`.
 function mis_prw_allconditions_loglike(params::Vector{<:Real}, preprocessed::PreprocessedData;
     layout::PRWLayout,
     r_max::Float64=4.0,
-    max_steps::Int=60)
+    max_steps::Int=60,
+    use_contaminant::Bool=false,
+    contaminant_alpha::Float64=0.0,
+    contaminant_rt_max::Float64=3.0)
 
     weighting_mode = layout.weighting_mode
     weights_exponential = weighting_mode == :exponential
@@ -182,6 +185,11 @@ function mis_prw_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         0.0 => 1e-10,
     )
     default_weight = weights_exponential ? 1.0 : weight_lookup[0.0]
+    if use_contaminant
+        if contaminant_alpha < 0.0 || contaminant_alpha > 0.5 || contaminant_rt_max <= 0.0
+            return Inf
+        end
+    end
 
     total_neg_ll = 0.0
     w_slope_normalized = weights_exponential ? (w_slope / r_max) : 0.0
@@ -224,6 +232,9 @@ function mis_prw_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             lik_floor = prw_pdf_point(rt, t0_use, C_use, abs_floor, choice)
             lik_ceil = prw_pdf_point(rt, t0_use, C_use, abs_ceil, choice)
             lik = p_floor * lik_floor + p_ceil * lik_ceil
+            if use_contaminant
+                lik = (1 - contaminant_alpha) * lik + contaminant_alpha * (1 / contaminant_rt_max)
+            end
 
             total_neg_ll -= log(max(lik, 1e-20))
         end

@@ -121,6 +121,10 @@ function run_analysis()
     println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
     println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
     println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
+    use_contam = ConfigPRW.USE_CONTAMINANT_FLOOR_PRW
+    contam_alpha = ConfigPRW.CONTAMINANT_ALPHA_PRW
+    contam_rtmax = ConfigPRW.CONTAMINANT_RT_MAX_PRW
+    println("Contaminant floor: $(use_contam ? "enabled (α=$(contam_alpha), rt_max=$(contam_rtmax)s)" : "disabled")")
 
     # Create images subfolder if it doesn't exist (reused by plotting utilities)
     images_dir = ConfigPRW.IMAGES_DIR_PRW
@@ -199,7 +203,7 @@ function run_analysis()
         println("  $name: [$(lower[i]), $(upper[i])], initial: $(x0[i])")
     end
 
-    objective_func = (x, d) -> mis_prw_allconditions_loglike(x, d; layout=layout, r_max=r_max, max_steps=max_steps_use)
+    objective_func = (x, d) -> mis_prw_allconditions_loglike(x, d; layout=layout, r_max=r_max, max_steps=max_steps_use, use_contaminant=use_contam, contaminant_alpha=contam_alpha, contaminant_rt_max=contam_rtmax)
     opt_cfg = ConfigPRW.get_optimization_config_prw()
     time_limit_use = debug_sample > 0 ? min(20.0, opt_cfg.time_limit) : opt_cfg.time_limit
     result = fit_model_prw(preprocessed_data, objective_func;
@@ -230,7 +234,7 @@ function run_analysis()
     sorted_cc = sort(collect(keys(condition_data)))
     for cc in sorted_cc
         df_cond = condition_data[cc]
-        p = generate_prw_condition_plot(df_cond, best_params, layout; r_max=r_max, max_steps=PRW_MAX_STEPS, output_path=nothing)
+        p = generate_prw_condition_plot(df_cond, best_params, layout; r_max=r_max, max_steps=PRW_MAX_STEPS, output_path=nothing, use_contaminant=use_contam, contaminant_alpha=contam_alpha, contaminant_rt_max=contam_rtmax)
         push!(plots_for_grid, p)
     end
     if !isempty(plots_for_grid)
@@ -238,19 +242,21 @@ function run_analysis()
         cols = ceil(Int, sqrt(n))
         rows = ceil(Int, n / cols)
         combined = plot(plots_for_grid..., layout=(rows, cols), size=(cols*500, rows*400))
-        combined_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id).png")
+        contam_tag = use_contam ? "-contam" : "-nocontam"
+        combined_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
         savefig(combined, combined_path)
         println("Saved combined PRW RT grid to $combined_path")
     end
 
     # Accuracy plot across conditions
-    acc_plot_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "accuracy_prw_allconditions_P$(data_config.participant_id).png")
-    generate_overall_accuracy_plot_prw_allconditions(condition_data, best_params, layout; r_max=r_max, max_steps=PRW_MAX_STEPS, output_plot=acc_plot_path)
+    contam_tag = use_contam ? "-contam" : "-nocontam"
+    acc_plot_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "accuracy_prw_allconditions_P$(data_config.participant_id)$(contam_tag).png")
+    generate_overall_accuracy_plot_prw_allconditions(condition_data, best_params, layout; r_max=r_max, max_steps=PRW_MAX_STEPS, output_plot=acc_plot_path, use_contaminant=use_contam, contaminant_alpha=contam_alpha)
 
     println("\nAnalysis complete. Outputs:")
     println("  Params: $(results_path)")
     println("  Accuracy plot: $(acc_plot_path)")
-    rt_grid_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id).png")
+    rt_grid_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
     println("  RT grid: $(rt_grid_path)")
 end
 

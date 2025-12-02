@@ -15,6 +15,7 @@ export ACCURACY_YLIM_PRW, RT_ALLCONDITIONS_YLIM_PRW, AXIS_FONT_SIZE_PRW
 export SAVE_INDIVIDUAL_CONDITION_PLOTS_PRW
 export CUE_CONDITION_SETUP_PRW, SINGLE_CUE_CONDITIONS_PRW, DOUBLE_CUE_CONDITIONS_PRW
 export OptimizationConfigPRW, get_optimization_config_prw
+export USE_CONTAMINANT_FLOOR_PRW, CONTAMINANT_ALPHA_PRW, CONTAMINANT_RT_MAX_PRW
 
 # --------------------------------------------------------------------------
 # Basic plot and data settings
@@ -86,6 +87,12 @@ const VARY_C_BY_CUECOUNT_PRW = true
 const VARY_T0_BY_CUECOUNT_PRW = true
 const VARY_K_BY_CUECOUNT_PRW = true
 
+# Optional contaminant floor (uniform RT density) to handle fat RT tails.
+# Mixture probability is fixed manually; not estimated in the PRW fit.
+const USE_CONTAMINANT_FLOOR_PRW = true
+const CONTAMINANT_ALPHA_PRW = 0.05
+const CONTAMINANT_RT_MAX_PRW = 3.0  # seconds
+
 # Optimization defaults (lightweight copy to avoid depending on main Config)
 struct OptimizationConfigPRW
     g_tol::Float64
@@ -100,8 +107,8 @@ function get_optimization_config_prw()::OptimizationConfigPRW
         1e-2,
         1e-3,
         1e-3,
-        3,
-        30.0,
+        200,
+        600.0,
     )
 end
 
