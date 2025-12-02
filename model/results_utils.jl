@@ -1,15 +1,11 @@
 # ==========================================================================
-# Results Utilities Module
+# Results Utilities
 # Functions for saving model fitting results
 # ==========================================================================
-
-module ResultsUtils
 
 using DataFrames
 using CSV
 using Optim
-
-export save_results, save_results_dual, save_results_single, save_results_allconditions
 
 """
     save_results(result::Optim.MultivariateOptimizationResults, output_csv::String="model_fit_results.csv"; cue_condition=nothing)::DataFrame
@@ -156,5 +152,3 @@ function save_results_allconditions(result::Optim.MultivariateOptimizationResult
 
     return results_df
 end
-
-end # module

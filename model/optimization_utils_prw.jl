@@ -2,15 +2,10 @@
 # Optimization Utilities for PRW (independent of main Config)
 # ==========================================================================
 
-module OptimizationUtilsPRW
-
 using DataFrames
 using Optim
 
-include("config_prw.jl")
-using .ConfigPRW
-
-export fit_model_prw
+# Note: config_prw.jl must be included before this file
 
 """
     fit_model_prw(data, objective_func; lower, upper, x0, time_limit=nothing, r_max=nothing)
@@ -22,7 +17,7 @@ function fit_model_prw(data::Union{DataFrame,Any}, objective_func::Function;
                    time_limit::Union{Nothing,Float64}=nothing, r_max::Union{Nothing,Float64}=nothing)::Optim.MultivariateOptimizationResults
     println("Fitting PRW model (this may take a minute)...")
 
-    opt_config = ConfigPRW.get_optimization_config_prw()
+    opt_config = get_optimization_config_prw()
     actual_time_limit = isnothing(time_limit) ? opt_config.time_limit : time_limit
 
     func = isnothing(r_max) ? x -> objective_func(x, data) : x -> objective_func(x, data; r_max=r_max)
@@ -55,5 +50,3 @@ function fit_model_prw(data::Union{DataFrame,Any}, objective_func::Function;
 
     return res
 end
-
-end # module

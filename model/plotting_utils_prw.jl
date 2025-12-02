@@ -4,8 +4,6 @@
 # plus overall accuracy plots per cue condition.
 # ==========================================================================
 
-module PlottingUtilsPRW
-
 ENV["GKSwstype"] = "100"
 
 using DataFrames
@@ -13,14 +11,11 @@ using Statistics
 using Plots
 using KernelDensity
 
-include("config_prw.jl")
-using .ConfigPRW
-using Main.PRWModel
+# Note: config_prw.jl must be included before this file
+# Note: prw_model_utils.jl must be included before this file
 
-const RT_ALLCONDITIONS_YLIM = ConfigPRW.RT_ALLCONDITIONS_YLIM_PRW
-const AXIS_FONT_SIZE = ConfigPRW.AXIS_FONT_SIZE_PRW
-
-export generate_prw_condition_plot, generate_overall_accuracy_plot_prw_allconditions
+const RT_ALLCONDITIONS_YLIM = RT_ALLCONDITIONS_YLIM_PRW
+const AXIS_FONT_SIZE = AXIS_FONT_SIZE_PRW
 
 """
     _compute_abs_cache(weights, k_use, max_steps)
@@ -33,11 +28,11 @@ function _compute_abs_cache(step_probs, k_use::Float64, max_steps::Int)
     p_ceil = k_use - k_floor
     p_floor = 1.0 - p_ceil
 
-    T_floor = PRWModel.build_transition_matrix(step_probs, k_floor)
-    abs_floor = PRWModel.compute_absorption_probs(T_floor, step_probs, k_floor, max_steps)
+    T_floor = build_transition_matrix(step_probs, k_floor)
+    abs_floor = compute_absorption_probs(T_floor, step_probs, k_floor, max_steps)
     abs_ceil = if k_ceil > k_floor
-        T_ceil = PRWModel.build_transition_matrix(step_probs, k_ceil)
-        PRWModel.compute_absorption_probs(T_ceil, step_probs, k_ceil, max_steps)
+        T_ceil = build_transition_matrix(step_probs, k_ceil)
+        compute_absorption_probs(T_ceil, step_probs, k_ceil, max_steps)
     else
         abs_floor
     end
@@ -67,7 +62,7 @@ Plot observed RT KDE for a condition and overlay PRW predicted PDF (all choices)
 Returns the Plots.Plot object.
 """
 function generate_prw_condition_plot(df::DataFrame, params, layout; r_max::Float64=4.0, max_steps::Int=60, output_path::Union{Nothing,String}=nothing, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0)
-    cond_type = first(ConfigPRW.cue_condition_type_prw.(df.CueCondition))
+    cond_type = first(cue_condition_type_prw.(df.CueCondition))
     C_use = cond_type == :double && haskey(layout.idx_C, :double) ? params[layout.idx_C[:double]] : params[layout.idx_C[haskey(layout.idx_C, :all) ? :all : :single]]
     k_use = cond_type == :double && haskey(layout.idx_k, :double) ? params[layout.idx_k[:double]] : params[layout.idx_k[haskey(layout.idx_k, :all) ? :all : :single]]
     t0_use = cond_type == :double && haskey(layout.idx_t0, :double) ? params[layout.idx_t0[:double]] : params[layout.idx_t0[haskey(layout.idx_t0, :all) ? :all : :single]]
@@ -99,8 +94,8 @@ function generate_prw_condition_plot(df::DataFrame, params, layout; r_max::Float
             # unconditional over choices
             dens_c = 0.0
             for c in 1:length(rewards)
-                dens_c += p_floor * PRWModel.prw_pdf_point(t, t0_use, C_use, abs_floor, c)
-                dens_c += p_ceil * PRWModel.prw_pdf_point(t, t0_use, C_use, abs_ceil, c)
+                dens_c += p_floor * prw_pdf_point(t, t0_use, C_use, abs_floor, c)
+                dens_c += p_ceil * prw_pdf_point(t, t0_use, C_use, abs_ceil, c)
             end
             if use_contaminant
                 dens_c = (1 - contaminant_alpha) * dens_c + contaminant_alpha * (1 / contaminant_rt_max)
@@ -138,7 +133,7 @@ function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{A
     sorted_conditions = sort(collect(keys(condition_data)))
     for cc in sorted_conditions
         df = condition_data[cc]
-        cond_type = ConfigPRW.cue_condition_type_prw(cc)
+        cond_type = cue_condition_type_prw(cc)
         C_use = cond_type == :double && haskey(layout.idx_C, :double) ? params[layout.idx_C[:double]] : params[layout.idx_C[haskey(layout.idx_C, :all) ? :all : :single]]
         k_use = cond_type == :double && haskey(layout.idx_k, :double) ? params[layout.idx_k[:double]] : params[layout.idx_k[haskey(layout.idx_k, :all) ? :all : :single]]
         t0_use = cond_type == :double && haskey(layout.idx_t0, :double) ? params[layout.idx_t0[:double]] : params[layout.idx_t0[haskey(layout.idx_t0, :all) ? :all : :single]]
@@ -192,9 +187,9 @@ function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{A
 
     x = 1:length(labels)
     p = bar(x .- 0.15, observed_acc, bar_width=0.3, label="Observed", color=:gray70;
-        legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE, ylims=ConfigPRW.ACCURACY_YLIM_PRW)
+        legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE, ylims=ACCURACY_YLIM_PRW)
     bar!(p, x .+ 0.15, predicted_acc, bar_width=0.3, label="Predicted PRW", color=:steelblue;
-        legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE, ylims=ConfigPRW.ACCURACY_YLIM_PRW)
+        legend=:topright, guidefontsize=AXIS_FONT_SIZE, tickfontsize=AXIS_FONT_SIZE, ylims=ACCURACY_YLIM_PRW)
     xticks!(p, x, labels)
     plot!(p; xtickfont=font(8, rotation=20))
     ylabel!(p, "Accuracy")
@@ -207,5 +202,3 @@ function generate_overall_accuracy_plot_prw_allconditions(condition_data::Dict{A
 
     return p
 end
-
-end # module

@@ -2,10 +2,6 @@
 # Plotting for Dual-Mode LBA (mixture of two LBAs with shared weights)
 # ==========================================================================
 
-module PlottingUtilsDualModes
-
-export mixture_rt_plot, accuracy_plot_dualmodes
-
 ENV["GKSwstype"] = "100"
 
 using DataFrames
@@ -13,7 +9,8 @@ using Distributions
 using SequentialSamplingModels
 using Statistics
 using Plots
-using ..ConfigDualModes
+
+# Note: config_dualmodes.jl must be included before this file
 
 const AXIS_FONT_SIZE = 12
 
@@ -116,7 +113,7 @@ function accuracy_plot_dualmodes(condition_data::Dict{Any,DataFrame}, params::Ve
 
     for cc in sort(collect(keys(condition_data)))
         df = condition_data[cc]
-        cond_type = ConfigDualModes.cue_condition_type(cc)
+        cond_type = cue_condition_type(cc)
         pi_use = params[layout.idx_pi[layout.vary_pi_by_cue ? cond_type : :all]]
         groups = Dict{String,Any}()
         for row in eachrow(df)
@@ -180,5 +177,3 @@ function accuracy_plot_dualmodes(condition_data::Dict{Any,DataFrame}, params::Ve
     end
     return p
 end
-
-end # module

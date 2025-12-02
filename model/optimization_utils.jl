@@ -1,21 +1,13 @@
 # ==========================================================================
-# Optimization Utilities Module
+# Optimization Utilities
 # Model fitting and optimization functions
 # ==========================================================================
-
-module OptimizationUtils
 
 using DataFrames
 using Optim
 
-# Import config module to access optimization settings
-include("config.jl")
-using .Config
-
-# Import PreprocessedData type from the top-level ModelUtils module
-using Main.ModelUtils: PreprocessedData
-
-export fit_model
+# Note: config.jl must be included before this file
+# Note: model_utils.jl must be included before this file (for PreprocessedData)
 
 """
     fit_model(data::Union{DataFrame,PreprocessedData}, objective_func::Function;
@@ -89,5 +81,3 @@ function fit_model(data::Union{DataFrame,PreprocessedData}, objective_func::Func
 
     return res
 end
-
-end # module

@@ -9,25 +9,18 @@
 
 using Pkg
 using Optim
-
-include("data_utils.jl")
-include("model_utils.jl")
-include("config_prw.jl")
-include("optimization_utils_prw.jl")
-include("results_utils.jl")
-include("prw_model_utils.jl")
-include("plotting_utils_prw.jl")
-
-using .DataUtils
-using .ModelUtils
-using .ConfigPRW
-using .OptimizationUtilsPRW
-using .ResultsUtils
-using .PRWModel
-using .PlottingUtilsPRW
 using DataFrames
 using Random
 using Plots
+
+# Include files in dependency order
+include("config_prw.jl")  # No dependencies
+include("data_utils.jl")  # No dependencies
+include("model_utils.jl")  # Depends on data structures
+include("prw_model_utils.jl")  # Depends on model_utils.jl
+include("results_utils.jl")  # Depends on Optim
+include("optimization_utils_prw.jl")  # Depends on config_prw.jl
+include("plotting_utils_prw.jl")  # Depends on config_prw.jl and prw_model_utils.jl
 
 const PRW_K_BOUNDS = (1.0, 12.0, 4.0)  # integer threshold; mixed via Blurton et al. Appendix C
 const PRW_MAX_STEPS = 20
@@ -37,10 +30,10 @@ const PRW_MAX_STEPS = 20
 
 Construct bounds, starts, and index layout for PRW all-conditions fitting.
 """
-function build_prw_allconditions_params(weighting_mode::Symbol=ConfigPRW.DEFAULT_WEIGHTING_MODE_PRW;
-    vary_C_by_cue::Bool=ConfigPRW.VARY_C_BY_CUECOUNT_PRW,
-    vary_t0_by_cue::Bool=ConfigPRW.VARY_T0_BY_CUECOUNT_PRW,
-    vary_k_by_cue::Bool=ConfigPRW.VARY_K_BY_CUECOUNT_PRW,
+function build_prw_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MODE_PRW;
+    vary_C_by_cue::Bool=VARY_C_BY_CUECOUNT_PRW,
+    vary_t0_by_cue::Bool=VARY_T0_BY_CUECOUNT_PRW,
+    vary_k_by_cue::Bool=VARY_K_BY_CUECOUNT_PRW,
     c_start_override::Union{Nothing,Real,Tuple}=nothing)
 
     names = String[]
@@ -55,7 +48,7 @@ function build_prw_allconditions_params(weighting_mode::Symbol=ConfigPRW.DEFAULT
 
     pushp!(n, lo, hi, start) = (push!(names, n); push!(lower, lo); push!(upper, hi); push!(x0, start); length(names))
 
-    c_lo, c_hi, c_start_default = ConfigPRW.C_BOUNDS_PRW
+    c_lo, c_hi, c_start_default = C_BOUNDS_PRW
     c_single_start = isnothing(c_start_override) ? c_start_default : (isa(c_start_override, Tuple) ? c_start_override[1] : c_start_override)
     c_double_start = isnothing(c_start_override) ? c_start_default : (isa(c_start_override, Tuple) ? c_start_override[end] : c_start_override)
     if vary_C_by_cue
@@ -66,11 +59,11 @@ function build_prw_allconditions_params(weighting_mode::Symbol=ConfigPRW.DEFAULT
     end
 
     if weighting_mode == :exponential
-        ws_lo, ws_hi, ws_start = ConfigPRW.W_SLOPE_BOUNDS_PRW
+        ws_lo, ws_hi, ws_start = W_SLOPE_BOUNDS_PRW
         idx_w[:w_slope] = pushp!("w_slope", ws_lo, ws_hi, ws_start)
     elseif weighting_mode == :free
         for sym in (:w2, :w3, :w4)
-            bnds = ConfigPRW.W_FREE_BOUNDS_PRW[sym]
+            bnds = W_FREE_BOUNDS_PRW[sym]
             idx_w[sym] = pushp!(String(sym), bnds...)
         end
     else
@@ -85,7 +78,7 @@ function build_prw_allconditions_params(weighting_mode::Symbol=ConfigPRW.DEFAULT
         idx_k[:all] = pushp!("k_all", k_lo, k_hi, k_start)
     end
 
-    t0_lo, t0_hi, t0_start = ConfigPRW.T0_BOUNDS_PRW
+    t0_lo, t0_hi, t0_start = T0_BOUNDS_PRW
     if vary_t0_by_cue
         idx_t0[:single] = pushp!("t0_single", t0_lo, t0_hi, t0_start)
         idx_t0[:double] = pushp!("t0_double", t0_lo, t0_hi, t0_start)
@@ -94,7 +87,7 @@ function build_prw_allconditions_params(weighting_mode::Symbol=ConfigPRW.DEFAULT
     end
 
     layout = PRWLayout(weighting_mode, vary_C_by_cue, vary_t0_by_cue, vary_k_by_cue, idx_C, idx_t0, idx_k, idx_w)
-    return ConfigPRW.AllConditionsParams(lower, upper, x0), layout, names
+    return AllConditionsParams(lower, upper, x0), layout, names
 end
 
 # ==========================================================================
@@ -102,32 +95,32 @@ end
 # ==========================================================================
 
 function run_analysis()
-    data_config = ConfigPRW.get_data_config_prw(ConfigPRW.PARTICIPANT_ID_PRW)
+    data_config = get_data_config_prw(PARTICIPANT_ID_PRW)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
     println("Selected Participant ID: $(data_config.participant_id)")
     println("Data path: $(data_config.data_base_path)")
 
-    weighting_mode = isnothing(ConfigPRW.WEIGHTING_MODE_OVERRIDE_PRW) ? ConfigPRW.DEFAULT_WEIGHTING_MODE_PRW : ConfigPRW.WEIGHTING_MODE_OVERRIDE_PRW
+    weighting_mode = isnothing(WEIGHTING_MODE_OVERRIDE_PRW) ? DEFAULT_WEIGHTING_MODE_PRW : WEIGHTING_MODE_OVERRIDE_PRW
     if !(weighting_mode in (:exponential, :free))
         error("PRW supports weighting_mode :exponential or :free; got $(weighting_mode)")
     end
-    vary_C_by_cue_type = ConfigPRW.VARY_C_BY_CUECOUNT_PRW
-    vary_t0_by_cue_type = ConfigPRW.VARY_T0_BY_CUECOUNT_PRW
-    vary_k_by_cue_type = ConfigPRW.VARY_K_BY_CUECOUNT_PRW
+    vary_C_by_cue_type = VARY_C_BY_CUECOUNT_PRW
+    vary_t0_by_cue_type = VARY_T0_BY_CUECOUNT_PRW
+    vary_k_by_cue_type = VARY_K_BY_CUECOUNT_PRW
 
     println("Reward weighting mode: $weighting_mode")
     println("Vary C by cue-count (single vs double): $vary_C_by_cue_type")
     println("Vary t0 by cue-count (single vs double): $vary_t0_by_cue_type")
     println("Vary k by cue-count (single vs double): $vary_k_by_cue_type")
-    use_contam = ConfigPRW.USE_CONTAMINANT_FLOOR_PRW
-    contam_alpha = ConfigPRW.CONTAMINANT_ALPHA_PRW
-    contam_rtmax = ConfigPRW.CONTAMINANT_RT_MAX_PRW
+    use_contam = USE_CONTAMINANT_FLOOR_PRW
+    contam_alpha = CONTAMINANT_ALPHA_PRW
+    contam_rtmax = CONTAMINANT_RT_MAX_PRW
     println("Contaminant floor: $(use_contam ? "enabled (α=$(contam_alpha), rt_max=$(contam_rtmax)s)" : "disabled")")
 
     # Create images subfolder if it doesn't exist (reused by plotting utilities)
-    images_dir = ConfigPRW.IMAGES_DIR_PRW
+    images_dir = IMAGES_DIR_PRW
     if !isdir(images_dir)
         mkdir(images_dir)
         println("Created images directory: $images_dir")
@@ -153,7 +146,7 @@ function run_analysis()
     sort!(cue_conditions)
     println("\nFound $(length(cue_conditions)) unique cue conditions.")
 
-    cue_condition_types = ConfigPRW.cue_condition_type_prw.(data.CueCondition)
+    cue_condition_types = cue_condition_type_prw.(data.CueCondition)
     println("Total trials across all conditions: $(nrow(data))")
 
     println("\n" * "=" ^ 70)
@@ -204,7 +197,7 @@ function run_analysis()
     end
 
     objective_func = (x, d) -> mis_prw_allconditions_loglike(x, d; layout=layout, r_max=r_max, max_steps=max_steps_use, use_contaminant=use_contam, contaminant_alpha=contam_alpha, contaminant_rt_max=contam_rtmax)
-    opt_cfg = ConfigPRW.get_optimization_config_prw()
+    opt_cfg = get_optimization_config_prw()
     time_limit_use = debug_sample > 0 ? min(20.0, opt_cfg.time_limit) : opt_cfg.time_limit
     result = fit_model_prw(preprocessed_data, objective_func;
                        lower=lower, upper=upper, x0=x0, time_limit=time_limit_use)
@@ -215,12 +208,12 @@ function run_analysis()
         println("  $name = $(round(val, digits=4))")
     end
 
-    if !isdir(ConfigPRW.OUTPUTDATA_DIR_PRW)
-        mkdir(ConfigPRW.OUTPUTDATA_DIR_PRW)
+    if !isdir(OUTPUTDATA_DIR_PRW)
+        mkdir(OUTPUTDATA_DIR_PRW)
     end
 
     # Save parameters
-    results_path = joinpath(ConfigPRW.OUTPUTDATA_DIR_PRW, "model_fit_results_prw_allconditions_P$(data_config.participant_id).csv")
+    results_path = joinpath(OUTPUTDATA_DIR_PRW, "model_fit_results_prw_allconditions_P$(data_config.participant_id).csv")
     save_results_allconditions(result, results_path; param_names=param_names)
 
     # Organize data by cue condition for plotting
@@ -243,20 +236,20 @@ function run_analysis()
         rows = ceil(Int, n / cols)
         combined = plot(plots_for_grid..., layout=(rows, cols), size=(cols*500, rows*400))
         contam_tag = use_contam ? "-contam" : "-nocontam"
-        combined_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
+        combined_path = joinpath(IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
         savefig(combined, combined_path)
         println("Saved combined PRW RT grid to $combined_path")
     end
 
     # Accuracy plot across conditions
     contam_tag = use_contam ? "-contam" : "-nocontam"
-    acc_plot_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "accuracy_prw_allconditions_P$(data_config.participant_id)$(contam_tag).png")
+    acc_plot_path = joinpath(IMAGES_DIR_PRW, "accuracy_prw_allconditions_P$(data_config.participant_id)$(contam_tag).png")
     generate_overall_accuracy_plot_prw_allconditions(condition_data, best_params, layout; r_max=r_max, max_steps=PRW_MAX_STEPS, output_plot=acc_plot_path, use_contaminant=use_contam, contaminant_alpha=contam_alpha)
 
     println("\nAnalysis complete. Outputs:")
     println("  Params: $(results_path)")
     println("  Accuracy plot: $(acc_plot_path)")
-    rt_grid_path = joinpath(ConfigPRW.IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
+    rt_grid_path = joinpath(IMAGES_DIR_PRW, "prw_fit_all_conditions_grid_P$(data_config.participant_id)$(contam_tag).png")
     println("  RT grid: $(rt_grid_path)")
 end
 

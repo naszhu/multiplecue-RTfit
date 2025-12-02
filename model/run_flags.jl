@@ -1,13 +1,7 @@
 # ==========================================================================
-# Run Flags Module
+# Run Flags
 # Central place for toggling plotting/display options for main scripts
 # ==========================================================================
 
-module RunFlags
-
-# Re-export centralized flags from Config for backward compatibility
-using Main.Config: get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
-
-export get_plot_config, SAVE_INDIVIDUAL_CONDITION_PLOTS
-
-end # module
+# Note: This file is now just a placeholder. The functions are defined in config.jl
+# and will be available after config.jl is included.

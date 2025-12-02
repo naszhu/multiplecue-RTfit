@@ -1,12 +1,13 @@
-module PRWModel
+# ==========================================================================
+# PRW Model Utilities
+# MIS Poisson Random Walk model implementation
+# ==========================================================================
 
 using LinearAlgebra
 using Distributions
 using DataFrames
 
-import Main.ModelUtils: PreprocessedData
-
-export mis_prw_allconditions_loglike, PRWLayout
+# Note: model_utils.jl must be included before this file (for PreprocessedData)
 
 """
     PRWLayout
@@ -242,5 +243,3 @@ function mis_prw_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
 
     return total_neg_ll
 end
-
-end # module

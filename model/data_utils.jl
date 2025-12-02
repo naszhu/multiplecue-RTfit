@@ -1,15 +1,11 @@
 # ==========================================================================
-# Data Utilities Module
+# Data Utilities
 # Functions for reading and processing PsychoPy data files
 # ==========================================================================
-
-module DataUtils
 
 using CSV
 using DataFrames
 using Glob
-
-export parse_clean_float, parse_array_string, read_psychopy_dat, load_and_process_data
 
 """
     parse_clean_float(val)::Union{Float64, Missing}
@@ -179,5 +175,3 @@ function load_and_process_data(path::String, file_pattern::String="*.dat")::Data
 
     return full_df
 end
-
-end # module

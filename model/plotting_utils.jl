@@ -1,9 +1,7 @@
 # ==========================================================================
-# Plotting Utilities Module
+# Plotting Utilities
 # Visualization functions for model fitting results
 # ==========================================================================
-
-module PlottingUtils
 
 # Force GR into headless mode so plots can be generated without a display
 ENV["GKSwstype"] = "100"
@@ -13,18 +11,10 @@ using Distributions
 using SequentialSamplingModels
 using Statistics
 using Plots
-using Main.Config
 
-# Shared styling defaults pulled from centralized Config
-const RT_ALLCONDITIONS_YLIM = Config.RT_ALLCONDITIONS_YLIM
-const AXIS_FONT_SIZE = Config.AXIS_FONT_SIZE
-
-# Accuracy plot y-limits
-get_accuracy_ylim()::Tuple{Float64,Float64} = Tuple{Float64,Float64}(Config.ACCURACY_YLIM)
-
-export generate_plot, generate_plot_dual, generate_plot_single
-export generate_accuracy_plot_dual, generate_overall_accuracy_plot, generate_overall_accuracy_plot_single
-export generate_plot_allconditions, generate_overall_accuracy_plot_allconditions
+# Note: config.jl must be included before this file
+# The constants RT_ALLCONDITIONS_YLIM, AXIS_FONT_SIZE, and ACCURACY_YLIM
+# are defined in config.jl and will be available after it's included
 
 """
     generate_plot(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, config=nothing, save_plot::Bool=true)::Plots.Plot
@@ -1255,7 +1245,7 @@ end
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
     - config: Optional ModelConfig object with display flags
 """
-function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
+function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, output_plot::String="model_fit_plot.png"; cue_condition=nothing, r_max::Union{Nothing,Float64}=nothing, config=nothing, weighting_mode::Symbol=:exponential, save_plot::Bool=true, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type::Symbol=:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, contaminant_rt_max::Float64=3.0, estimate_contaminant::Bool=false, layout::Union{Nothing,AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating plot for all-conditions model (shared parameters)...")
 
     if layout !== nothing
@@ -1539,7 +1529,7 @@ end
     - output_plot: Output filename for plot
     - r_max: Maximum reward value across entire experiment (for consistent normalization)
 """
-function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, estimate_contaminant::Bool=false, layout::Union{Nothing,Config.AllConditionsLayout}=nothing)::Plots.Plot
+function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,DataFrame}, params::Vector{<:Real}, output_plot::String="accuracy_plot_all_conditions.png"; r_max::Union{Nothing,Float64}=nothing, weighting_mode::Symbol=:exponential, vary_C_by_cue_type::Bool=false, vary_t0_by_cue_type::Bool=false, vary_k_by_cue_type::Bool=false, cue_condition_type_fn::Function=cc->:single, use_contaminant::Bool=false, contaminant_alpha::Float64=0.0, estimate_contaminant::Bool=false, layout::Union{Nothing,AllConditionsLayout}=nothing)::Plots.Plot
     println("Generating overall accuracy plot for all conditions (shared parameters)...")
 
     if layout !== nothing
@@ -1772,5 +1762,3 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
     end
     return p
 end
-
-end # module

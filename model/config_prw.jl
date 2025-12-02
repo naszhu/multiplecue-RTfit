@@ -1,21 +1,7 @@
 # ==========================================================================
-# PRW Configuration Module
+# PRW Configuration
 # Independent settings for MIS Poisson Random Walk fitting
 # ==========================================================================
-
-module ConfigPRW
-
-export DataConfig, AllConditionsParams, AllConditionsLayout
-export build_allconditions_params_prw, get_data_config_prw, cue_condition_type_prw
-export DEFAULT_WEIGHTING_MODE_PRW, WEIGHTING_MODE_OVERRIDE_PRW
-export VARY_C_BY_CUECOUNT_PRW, VARY_T0_BY_CUECOUNT_PRW, VARY_K_BY_CUECOUNT_PRW
-export C_BOUNDS_PRW, W_SLOPE_BOUNDS_PRW, W_FREE_BOUNDS_PRW, T0_BOUNDS_PRW, K_BOUNDS_PRW
-export OUTPUTDATA_DIR_PRW, IMAGES_DIR_PRW, PARTICIPANT_ID_PRW
-export ACCURACY_YLIM_PRW, RT_ALLCONDITIONS_YLIM_PRW, AXIS_FONT_SIZE_PRW
-export SAVE_INDIVIDUAL_CONDITION_PLOTS_PRW
-export CUE_CONDITION_SETUP_PRW, SINGLE_CUE_CONDITIONS_PRW, DOUBLE_CUE_CONDITIONS_PRW
-export OptimizationConfigPRW, get_optimization_config_prw
-export USE_CONTAMINANT_FLOOR_PRW, CONTAMINANT_ALPHA_PRW, CONTAMINANT_RT_MAX_PRW
 
 # --------------------------------------------------------------------------
 # Basic plot and data settings
@@ -197,5 +183,3 @@ function build_allconditions_params_prw(weighting_mode::Symbol=DEFAULT_WEIGHTING
     layout = AllConditionsLayout(weighting_mode, vary_C_by_cue, vary_k_by_cue, vary_t0_by_cue, idx_C, idx_k, idx_t0, idx_w)
     return AllConditionsParams(lower, upper, x0), layout, names
 end
-
-end # module

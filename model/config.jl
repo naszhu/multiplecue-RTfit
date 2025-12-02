@@ -1,25 +1,7 @@
 # ==========================================================================
-# Configuration Module
+# Configuration
 # Settings and flags for model fitting and plotting
 # ==========================================================================
-
-module Config
-
-export ModelConfig, SingleLBAParams, DualLBAParams, AllConditionsParams, AllConditionsLayout, DataConfig, OptimizationConfig
-export build_allconditions_params, get_default_single_params, get_default_dual_params, get_data_config, get_optimization_config, get_weighting_mode, get_plot_config
-export ACCURACY_YLIM, SAVE_INDIVIDUAL_CONDITION_PLOTS, SHOW_TARGET_CHOICE_IN_PLOTS, SHOW_DISTRACTOR_CHOICE_IN_PLOTS
-export RT_ALLCONDITIONS_YLIM, AXIS_FONT_SIZE
-export DATA_BASE_DIR, DATA_PATH, FILE_PATTERN
-export OUTPUTDATA_DIR, IMAGES_DIR
-export OUTPUT_CSV_MIXTURE, OUTPUT_PLOT_MIXTURE
-export PARTICIPANT_ID_SINGLE, OUTPUT_CSV_SINGLE, OUTPUT_PLOT_SINGLE
-export PARTICIPANT_ID_DUAL, OUTPUT_CSV_DUAL, OUTPUT_PLOT_DUAL
-export PARTICIPANT_ID_ALLCONDITIONS, WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS, OUTPUT_CSV_ALLCONDITIONS, OUTPUT_PLOT_ALLCONDITIONS
-export CUE_CONDITION_SETUP, SINGLE_CUE_CONDITIONS, DOUBLE_CUE_CONDITIONS, cue_condition_type
-export VARY_C_BY_CUECOUNT_ALLCONDITIONS, VARY_T0_BY_CUECOUNT_ALLCONDITIONS, VARY_K_BY_CUECOUNT_ALLCONDITIONS, VARY_CONTAM_BY_CUE_ALLCONDITIONS
-export USE_CONTAMINANT_FLOOR_ALLCONDITIONS, CONTAMINANT_ALPHA_ALLCONDITIONS, CONTAMINANT_RT_MAX_ALLCONDITIONS
-export ESTIMATE_CONTAMINANT_ALLCONDITIONS
-export C_START_OVERRIDE_ALLCONDITIONS
 
 """
     ModelConfig
@@ -447,5 +429,3 @@ function get_optimization_config()::OptimizationConfig
         600.0      # time_limit: Maximum time in seconds
     )
 end
-
-end # module
