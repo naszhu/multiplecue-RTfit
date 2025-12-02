@@ -111,6 +111,7 @@ function run_analysis()
 
     # Check assertion after processing all rewards
     if r_max <= 0.0
+        error("r_max is 0.0, which is not allowed. Please check your data.")
         r_max = 1.0
     end
 
