@@ -3,13 +3,6 @@
 # Fully self-contained (does not depend on main config)
 # ==========================================================================
 
-module ConfigDualModes
-
-export ModelConfig, DualModesParams, DualModesLayout, DataConfig
-export build_dualmodes_params, get_data_config, get_weighting_mode, get_plot_config, cue_condition_type
-export PARTICIPANT_ID_DUALMODES, OUTPUT_CSV_DUALMODES, OUTPUT_PLOT_DUALMODES
-export WEIGHTING_MODE_DUALMODES
-
 using Base: @assert
 import Base: joinpath
 
@@ -242,5 +235,3 @@ function get_data_config(participant_id::Int)::DataConfig
     data_path = joinpath(DATA_BASE_DIR, folder, folder)
     return DataConfig(participant_id, data_path, "*.dat")
 end
-
-end # module

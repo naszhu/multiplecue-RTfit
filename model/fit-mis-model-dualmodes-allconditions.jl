@@ -3,23 +3,18 @@
 # ==========================================================================
 
 using Pkg
-
-include("data_utils.jl")
-include("model_utils.jl")
-include("config_dualmodes.jl")
-include("plotting_utils_dualmodes.jl")
-include("optimization_utils.jl")
-include("results_utils.jl")
-
-using .DataUtils
-using .ModelUtils
-using .ConfigDualModes
-using .PlottingUtilsDualModes
-using .OptimizationUtils
-using .ResultsUtils
 using DataFrames
 using Optim
 using Plots
+
+# Include files in dependency order
+include("config_dualmodes.jl")  # No dependencies
+include("data_utils.jl")  # No dependencies
+include("model_utils.jl")  # Depends on data structures
+include("results_utils.jl")  # Depends on Optim
+include("config.jl")  # Needed by optimization_utils
+include("optimization_utils.jl")  # Depends on config.jl and model_utils.jl
+include("plotting_utils_dualmodes.jl")  # Depends on config_dualmodes.jl and model_utils.jl
 
 function run_analysis()
     data_config = get_data_config(PARTICIPANT_ID_DUALMODES)

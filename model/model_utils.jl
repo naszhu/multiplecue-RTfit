@@ -1,17 +1,11 @@
 # ==========================================================================
-# Model Utilities Module
+# Model Utilities
 # MIS-LBA mixture model logic and likelihood calculations
 # ==========================================================================
-
-module ModelUtils
 
 using DataFrames
 using Distributions
 using SequentialSamplingModels
-
-export mis_lba_mixture_loglike, mis_lba_dual_mixture_loglike, mis_lba_single_loglike, mis_lba_allconditions_loglike
-export mis_lba_dualmodes_loglike
-export PreprocessedData, preprocess_data_for_fitting
 
 """
     PreprocessedData
@@ -974,5 +968,3 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
 
     return total_neg_ll
 end
-
-end # module
