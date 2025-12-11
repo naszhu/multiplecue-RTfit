@@ -762,7 +762,7 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
 
         # Create plot
         title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)"
-        ylim_use = get_accuracy_ylim()
+        ylim_use = ACCURACY_YLIM
         p = plot(size=(1200, 700), title=title_str,
                  xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
                  ylim=ylim_use, legend=:topright)
@@ -852,7 +852,7 @@ function generate_accuracy_plot_dual(data::DataFrame, params, output_plot="accur
             title_str = "Choice Accuracy - Cue Condition: $cue_condition"
         end
 
-        ylim_use = get_accuracy_ylim()
+        ylim_use = ACCURACY_YLIM
         p = plot(size=(1000, 600), title=title_str, xlabel="Reward Structure",
                  ylabel="Choice Probability (Target)", ylim=ylim_use, legend=:topright)
 
@@ -1030,7 +1030,7 @@ function generate_overall_accuracy_plot(condition_fits::Dict, output_plot="accur
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nUsing Condition-Specific Fitted Parameters"
-    ylim_use = get_accuracy_ylim()
+    ylim_use = ACCURACY_YLIM
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
              ylim=ylim_use, legend=:topright)
@@ -1193,7 +1193,7 @@ function generate_overall_accuracy_plot_single(condition_fits::Dict, output_plot
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nSingle LBA Model - Condition-Specific Fitted Parameters"
-    ylim_use = get_accuracy_ylim()
+    ylim_use = ACCURACY_YLIM
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
              ylim=ylim_use, legend=:bottomright)
@@ -1724,7 +1724,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
 
     # Create plot
     title_str = "Choice Accuracy: Observed vs Predicted (All Cue Conditions)\nShared Parameters Across All Conditions"
-    ylim_use = get_accuracy_ylim()
+    ylim_use = ACCURACY_YLIM
     p = plot(size=(1200, 700), title=title_str,
              xlabel="Cue Condition", ylabel="Choice Probability (Target Option)",
              ylim=ylim_use, legend=:bottomright)
