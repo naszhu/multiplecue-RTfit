@@ -17,9 +17,10 @@ include("optimization_utils.jl")  # Depends on config.jl and model_utils.jl
 include("plotting_utils_dualmodes.jl")  # Depends on config_dualmodes.jl and model_utils.jl
 
 function run_analysis()
-    data_config = get_data_config(PARTICIPANT_ID_DUALMODES)
+    data_config = get_data_config(PARTICIPANT_ID_DUALMODES; dataset_version=DATASET_VERSION)
     weighting_mode = get_weighting_mode()
     println("Participant: $(data_config.participant_id)")
+    println("Dataset version: $(DATASET_VERSION) ($(DATASET_VERSION == 1 ? "CPP002" : "CPP001"))")
     println("Weighting mode: $weighting_mode")
 
     data = load_and_process_data(data_config.data_base_path, data_config.file_pattern)
@@ -77,7 +78,8 @@ function run_analysis()
     # Save results
     csv_dir = joinpath(@__DIR__, "outputdata")
     if !isdir(csv_dir); mkdir(csv_dir) end
-    csv_path = joinpath(csv_dir, "model_fit_results_dualmodes_P$(data_config.participant_id)$(flag_suffix).csv")
+    dataset_suffix = "_DS$(DATASET_VERSION)"  # Always include dataset version to avoid overwriting
+    csv_path = joinpath(csv_dir, "model_fit_results_dualmodes_P$(data_config.participant_id)$(dataset_suffix)$(flag_suffix).csv")
     save_results_allconditions(result, csv_path; param_names=param_names)
 
     # Plots
@@ -97,7 +99,7 @@ function run_analysis()
         n_cols = ceil(Int, sqrt(n_plots))
         n_rows = ceil(Int, n_plots / n_cols)
         combined = plot(plots..., layout=(n_rows,n_cols), size=(n_cols*500, n_rows*400))
-        savefig(combined, joinpath(img_dir, "model_fit_dualmodes_P$(data_config.participant_id)_allconditions$(flag_suffix).png"))
+        savefig(combined, joinpath(img_dir, "model_fit_dualmodes_P$(data_config.participant_id)_allconditions$(dataset_suffix)$(flag_suffix).png"))
     end
 
     # Accuracy plot
@@ -106,7 +108,7 @@ function run_analysis()
         cond_dict[cc] = filter(r->r.CueCondition==cc, data)
     end
     acc_plot = accuracy_plot_dualmodes(cond_dict, best, layout)
-    savefig(acc_plot, joinpath(img_dir, "accuracy_dualmodes_P$(data_config.participant_id)_allconditions$(flag_suffix).png"))
+    savefig(acc_plot, joinpath(img_dir, "accuracy_dualmodes_P$(data_config.participant_id)_allconditions$(dataset_suffix)$(flag_suffix).png"))
     println("Analysis complete.")
 end
 

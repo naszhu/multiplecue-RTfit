@@ -157,6 +157,7 @@ const OUTPUT_PLOT_DUAL = "model_fit_plot_dual.png"
 
 # All-conditions (fit-mis-model-allconditions.jl)
 const PARTICIPANT_ID_ALLCONDITIONS = 1  # Options: 1, 2, or 3
+const DATASET_VERSION_ALLCONDITIONS = 2  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
 const WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS = nothing  # leave as `nothing` to use DEFAULT_WEIGHTING_MODE
 const OUTPUT_CSV_ALLCONDITIONS = "model_fit_results_allconditions.csv"
 const OUTPUT_PLOT_ALLCONDITIONS = "model_fit_plot_allconditions.png"
@@ -364,26 +365,33 @@ function DataConfig(participant_id::Int;
 end
 
 """
-    get_data_config(participant_id::Int)::DataConfig
+    get_data_config(participant_id::Int; dataset_version::Int=1)::DataConfig
 
 Returns data configuration for the specified participant.
 
 Arguments:
 - participant_id::Int - Participant ID (1, 2, or 3)
+- dataset_version::Int - Dataset version (1 = CPP002, 2 = CPP001). Defaults to 1.
 
 Returns:
 - DataConfig with paths and settings for the specified participant
 """
-function get_data_config(participant_id::Int)::DataConfig
+function get_data_config(participant_id::Int; dataset_version::Int=1)::DataConfig
     if !(participant_id in [1, 2, 3])
         error("Invalid participant_id: $participant_id. Must be 1, 2, or 3.")
     end
+    @assert dataset_version in (1,2) "dataset_version must be 1 (CPP002) or 2 (CPP001)"
 
-    # Construct data path based on participant ID
-    # Folder structure: ../data/ParticipantCPP002-00X/ParticipantCPP002-00X
-    # where X is the participant number (1, 2, or 3)
-    participant_folder_name = "ParticipantCPP002-00$(participant_id)"
-    data_path = joinpath(DATA_BASE_DIR, participant_folder_name, participant_folder_name)
+    # Construct data path based on participant ID and dataset version
+    if dataset_version == 1
+        # CPP002: nested structure ParticipantCPP002-00X/ParticipantCPP002-00X/
+        participant_folder_name = "ParticipantCPP002-00$(participant_id)"
+        data_path = joinpath(DATA_BASE_DIR, participant_folder_name, participant_folder_name)
+    else
+        # CPP001: flat structure CPP001 - subj X/
+        folder = "CPP001 - subj $(participant_id)"
+        data_path = joinpath(DATA_BASE_DIR, folder)
+    end
 
     return DataConfig(participant_id, data_path, "*.dat")
 end

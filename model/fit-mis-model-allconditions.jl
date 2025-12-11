@@ -35,12 +35,14 @@ include("plotting_utils.jl")  # Depends on config.jl and model_utils.jl
 
 function run_analysis()
     # Get data configuration for selected participant
-    data_config = get_data_config(PARTICIPANT_ID_ALLCONDITIONS)
+    data_config = get_data_config(PARTICIPANT_ID_ALLCONDITIONS; dataset_version=DATASET_VERSION_ALLCONDITIONS)
     println("=" ^ 70)
     println("PARTICIPANT SELECTION")
     println("=" ^ 70)
     println("Selected Participant ID: $(data_config.participant_id)")
+    println("Dataset version: $(DATASET_VERSION_ALLCONDITIONS) ($(DATASET_VERSION_ALLCONDITIONS == 1 ? "CPP002" : "CPP001"))")
     println("Data path: $(data_config.data_base_path)")
+    dataset_suffix = "_DS$(DATASET_VERSION_ALLCONDITIONS)"  # Always include dataset version to avoid overwriting
     weighting_mode = isnothing(WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS) ? get_weighting_mode() : WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS
     vary_C_by_cue_type = VARY_C_BY_CUECOUNT_ALLCONDITIONS
     vary_t0_by_cue_type = VARY_T0_BY_CUECOUNT_ALLCONDITIONS
@@ -258,7 +260,7 @@ function run_analysis()
     end
 
     # Save overall results
-    output_filename = "model_fit_results_allconditions_P$(data_config.participant_id).csv"
+    output_filename = "model_fit_results_allconditions_P$(data_config.participant_id)$(dataset_suffix).csv"
     results_df = save_results_allconditions(result, output_filename; param_names=param_names)
     println("\nFitted parameters:")
     println(results_df)
@@ -291,7 +293,7 @@ function run_analysis()
         condition_data_dict[cue_cond] = condition_data
 
         # Generate plot for this condition using the SHARED parameters
-        plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(flag_suffix).png")
+        plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_condition_$(cue_cond)$(dataset_suffix)$(flag_suffix).png")
         p = generate_plot_allconditions(condition_data, best_params,
                                        plot_path;
                                        cue_condition=cue_cond, r_max=r_max, config=plot_config, weighting_mode=weighting_mode, save_plot=SAVE_INDIVIDUAL_CONDITION_PLOTS, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type=cue_condition_type(cue_cond), use_contaminant=USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, contaminant_rt_max=contam_rtmax_use, estimate_contaminant=ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
@@ -323,7 +325,7 @@ function run_analysis()
                             ylims=RT_ALLCONDITIONS_YLIM)
 
         # Save combined plot
-        combined_plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+        combined_plot_path = joinpath(images_dir, "model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(dataset_suffix)$(flag_suffix).png")
         savefig(combined_plot, combined_plot_path)
         println("Saved combined RT fit plot to $combined_plot_path")
     end
@@ -334,7 +336,7 @@ function run_analysis()
         println("GENERATING OVERALL ACCURACY PLOT")
         println("=" ^ 70)
 
-        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+        overall_accuracy_plot = joinpath(images_dir, "accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(dataset_suffix)$(flag_suffix).png")
         generate_overall_accuracy_plot_allconditions(condition_data_dict, best_params, overall_accuracy_plot; r_max=r_max, weighting_mode=weighting_mode, vary_C_by_cue_type=vary_C_by_cue_type, vary_t0_by_cue_type=vary_t0_by_cue_type, vary_k_by_cue_type=vary_k_by_cue_type, cue_condition_type_fn=cue_condition_type, use_contaminant=USE_CONTAMINANT_FLOOR_ALLCONDITIONS, contaminant_alpha=contam_alpha_use, estimate_contaminant=ESTIMATE_CONTAMINANT_ALLCONDITIONS, layout=layout)
     end
 
@@ -344,14 +346,14 @@ function run_analysis()
     println("Participant: $(data_config.participant_id)")
     println("Model: Single LBA with shared parameters across ALL conditions (C/t0 cue-specific flags applied as configured)")
     println("\nResults saved to:")
-    println("  - Parameters: outputdata/model_fit_results_allconditions_P$(data_config.participant_id).csv")
+    println("  - Parameters: outputdata/model_fit_results_allconditions_P$(data_config.participant_id)$(dataset_suffix).csv")
     if SAVE_INDIVIDUAL_CONDITION_PLOTS
-        println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*$(flag_suffix).png")
+        println("  - Individual condition plots: images/model_fit_plot_allconditions_P$(data_config.participant_id)_condition_*$(dataset_suffix)$(flag_suffix).png")
     else
         println("  - Individual condition plots skipped (SAVE_INDIVIDUAL_CONDITION_PLOTS=false)")
     end
-    println("  - Combined plot: images/model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
-    println("  - Accuracy plot: images/accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(flag_suffix).png")
+    println("  - Combined plot: images/model_fit_plot_allconditions_P$(data_config.participant_id)_all_conditions$(dataset_suffix)$(flag_suffix).png")
+    println("  - Accuracy plot: images/accuracy_plot_allconditions_P$(data_config.participant_id)_all_conditions$(dataset_suffix)$(flag_suffix).png")
     println("\nNote: This model uses shared parameters across conditions, with optional cue-count-specific C/t0 parameters.")
     println("      Separate predictions are still generated for each condition.")
 end

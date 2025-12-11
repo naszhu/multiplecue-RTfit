@@ -17,7 +17,8 @@ ModelConfig() = ModelConfig(SHOW_TARGET_CHOICE_IN_PLOTS, SHOW_DISTRACTOR_CHOICE_
 get_plot_config()::ModelConfig = ModelConfig()
 
 # Participant / IO
-const PARTICIPANT_ID_DUALMODES = 2
+const PARTICIPANT_ID_DUALMODES = 1
+const DATASET_VERSION = 2  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
 const OUTPUT_CSV_DUALMODES = joinpath(@__DIR__, "outputdata", "model_fit_results_dualmodes_P$(PARTICIPANT_ID_DUALMODES).csv")
 const OUTPUT_PLOT_DUALMODES = "model_fit_plot_dualmodes.png"
 
@@ -229,9 +230,19 @@ function build_dualmodes_params(weighting_mode::Symbol=get_weighting_mode();
     return DualModesParams(lower, upper, x0), layout, names
 end
 
-function get_data_config(participant_id::Int)::DataConfig
+function get_data_config(participant_id::Int; dataset_version::Int=DATASET_VERSION)::DataConfig
     @assert participant_id in (1,2,3)
-    folder = "ParticipantCPP002-00$(participant_id)"
-    data_path = joinpath(DATA_BASE_DIR, folder, folder)
+    @assert dataset_version in (1,2) "dataset_version must be 1 (CPP002) or 2 (CPP001)"
+    
+    if dataset_version == 1
+        # CPP002: nested structure ParticipantCPP002-00X/ParticipantCPP002-00X/
+        folder = "ParticipantCPP002-00$(participant_id)"
+        data_path = joinpath(DATA_BASE_DIR, folder, folder)
+    else
+        # CPP001: flat structure CPP001 - subj X/
+        folder = "CPP001 - subj $(participant_id)"
+        data_path = joinpath(DATA_BASE_DIR, folder)
+    end
+    
     return DataConfig(participant_id, data_path, "*.dat")
 end
