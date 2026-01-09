@@ -96,7 +96,7 @@ struct AllConditionsLayout
 end
 
 # Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
-const DEFAULT_WEIGHTING_MODE = :free
+const DEFAULT_WEIGHTING_MODE = :excitation_inhibition
 
 # Parameter bounds (lower, upper, x0) centralized here
 const C_BOUNDS_ALLCONDITIONS = (1.0, 30.0, 10.0)
@@ -116,7 +116,7 @@ const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
 # Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
 const VARY_C_BY_CUECOUNT_ALLCONDITIONS = false
 const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = false
-const VARY_K_BY_CUECOUNT_ALLCONDITIONS = false
+const VARY_K_BY_CUECOUNT_ALLCONDITIONS = true
 
 # Optional contaminant (uniform) floor to reduce catastrophic penalties from long tails
 const USE_CONTAMINANT_FLOOR_ALLCONDITIONS = false

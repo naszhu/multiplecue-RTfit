@@ -1260,6 +1260,7 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
     # Unpack parameters based on weighting mode / layout
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
+    Ge = Gi = 1.0
     contam_alpha_use = contaminant_alpha
     contam_rt_use = contaminant_rt_max
     vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
@@ -1286,8 +1287,18 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[p_idx]; p_idx += 1
+            Ge = params[p_idx]; p_idx += 1
+            Gi = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
         else
-            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition.")
         end
         if use_contaminant && estimate_contaminant
             contam_alpha_use = params[p_idx]; p_idx += 1
@@ -1299,10 +1310,14 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
         if weighting_mode == :exponential
             w_slope = params[layout.idx_w[:w_slope]]
-        else
+        elseif weighting_mode == :free
             w2 = params[layout.idx_w[:w2]]
             w3 = params[layout.idx_w[:w3]]
             w4 = params[layout.idx_w[:w4]]
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[layout.idx_w[:w_slope]]
+            Ge = params[layout.idx_w[:Ge]]
+            Gi = params[layout.idx_w[:Gi]]
         end
         A = params[layout.idx_A]
         C_single = getC(:single)
@@ -1350,9 +1365,15 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
     # Create title
     title_str = "Single LBA Fit (Shared Parameters Across All Conditions)"
     if !isnothing(cue_condition)
-        weight_str = weighting_mode == :exponential ?
-                     "θ=$(round(w_slope, digits=2))" :
-                     "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
+        if weighting_mode == :exponential
+            weight_str = "θ=$(round(w_slope, digits=2))"
+        elseif weighting_mode == :free
+            weight_str = "w=[1,$(round(w2, digits=2)),$(round(w3, digits=2)),$(round(w4, digits=2))]"
+        elseif weighting_mode == :excitation_inhibition
+            weight_str = "θ=$(round(w_slope, digits=2)), Ge=$(round(Ge, digits=2)), Gi=$(round(Gi, digits=2))"
+        else
+            weight_str = ""
+        end
         c_label = cue_condition_type == :double ? "double-cue" : "single-cue"
         title_str = "Cue Condition: $cue_condition ($c_label)\n(Shared: C=$(round(C_use, digits=2)), $weight_str, t0=$(round(t0_use, digits=3))s)"
     end
@@ -1395,8 +1416,8 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
     y_pred_target = zeros(length(t_grid))
     y_pred_distractor = zeros(length(t_grid))
 
-    # Compute r_max if exponential weighting is used
-    if weighting_mode == :exponential
+    # Compute r_max if exponential or excitation_inhibition weighting is used
+    if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
         if isnothing(r_max)
             r_max = 0.0
             for rewards in data.ParsedRewards
@@ -1433,9 +1454,31 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
         total_weight += weight
 
         # Reconstruct drift rates using selected weighting function
-        ws = weighting_mode == :exponential ?
-             exp.(w_slope .* rewards ./ r_max) :
-             [get(weight_lookup, r, default_weight) for r in rewards]
+        if weighting_mode == :exponential
+            ws = exp.(w_slope .* rewards ./ r_max)
+        elseif weighting_mode == :free
+            ws = [get(weight_lookup, r, default_weight) for r in rewards]
+        elseif weighting_mode == :excitation_inhibition
+            # Use exponential as baseline
+            ws = exp.(w_slope .* rewards ./ r_max)
+            # Apply excitation/inhibition gains for 2-cue conditions
+            if cue_condition_type == :double
+                max_reward_val = maximum(rewards)
+                max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                # Apply Ge to highest reward cue
+                if !isnothing(max_reward_idx)
+                    ws[max_reward_idx] *= Ge
+                end
+                # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                for (idx_w, r) in enumerate(rewards)
+                    if r > 0 && r < max_reward_val
+                        ws[idx_w] *= Gi
+                    end
+                end
+            end
+        else
+            error("Unknown weighting_mode: $weighting_mode")
+        end
         vs = C_use .* (ws ./ sum(ws))
 
         # Single LBA component with SHARED parameters
@@ -1544,6 +1587,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
     # Unpack SHARED parameters
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
+    Ge = Gi = 1.0
     contam_alpha_use = contaminant_alpha
     vary_contam_by_cue = layout === nothing ? false : layout.vary_contam_by_cue
     if layout === nothing
@@ -1569,8 +1613,18 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[p_idx]; p_idx += 1
+            Ge = params[p_idx]; p_idx += 1
+            Gi = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
         else
-            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition.")
         end
         if use_contaminant && estimate_contaminant
             contam_alpha_use = params[p_idx]
@@ -1581,10 +1635,14 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
         gett0(ct) = haskey(layout.idx_t0, ct) ? params[layout.idx_t0[ct]] : params[layout.idx_t0[:all]]
         if weighting_mode == :exponential
             w_slope = params[layout.idx_w[:w_slope]]
-        else
+        elseif weighting_mode == :free
             w2 = params[layout.idx_w[:w2]]
             w3 = params[layout.idx_w[:w3]]
             w4 = params[layout.idx_w[:w4]]
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[layout.idx_w[:w_slope]]
+            Ge = params[layout.idx_w[:Ge]]
+            Gi = params[layout.idx_w[:Gi]]
         end
         A = params[layout.idx_A]
         C_single = getC(:single)
@@ -1624,8 +1682,8 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
         k_use = cond_type == :double ? k_double : k_single
         t0_use = cond_type == :double ? t0_double : t0_single
 
-        # Compute r_max only if exponential weighting is requested
-        if weighting_mode == :exponential
+        # Compute r_max if exponential or excitation_inhibition weighting is used
+        if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
             if isnothing(r_max)
                 r_max_cond = 0.0
                 for rewards in condition_df.ParsedRewards
@@ -1679,9 +1737,32 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
             total_trials += n_trials
 
             # Predicted accuracy for this reward structure using SHARED parameters
-            ws = weighting_mode == :exponential ?
-                 exp.(w_slope .* rewards ./ r_max_use) :
-                 [get(weight_lookup, r, default_weight) for r in rewards]
+            if weighting_mode == :exponential
+                ws = exp.(w_slope .* rewards ./ r_max_use)
+            elseif weighting_mode == :free
+                ws = [get(weight_lookup, r, default_weight) for r in rewards]
+            elseif weighting_mode == :excitation_inhibition
+                # Use exponential as baseline
+                ws = exp.(w_slope .* rewards ./ r_max_use)
+                # Apply excitation/inhibition gains for 2-cue conditions
+                cond_type_use = cue_condition_type_fn(cc)
+                if cond_type_use == :double
+                    max_reward_val = maximum(rewards)
+                    max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                    # Apply Ge to highest reward cue
+                    if !isnothing(max_reward_idx)
+                        ws[max_reward_idx] *= Ge
+                    end
+                    # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                    for (idx_w, r) in enumerate(rewards)
+                        if r > 0 && r < max_reward_val
+                            ws[idx_w] *= Gi
+                        end
+                    end
+                end
+            else
+                error("Unknown weighting_mode: $weighting_mode")
+            end
             vs = C_use .* (ws ./ sum(ws))
 
             lba = LBA(ν=vs, A=A, k=k_use, τ=t0_use)
