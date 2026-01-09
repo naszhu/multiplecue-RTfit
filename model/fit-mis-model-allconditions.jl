@@ -139,7 +139,13 @@ function run_analysis()
     x0 = params_config.x0
 
     flag_tokens = String[]
-    push!(flag_tokens, weighting_mode == :free ? "wfree" : "wslope")
+    if weighting_mode == :free
+        push!(flag_tokens, "wfree")
+    elseif weighting_mode == :excitation_inhibition
+        push!(flag_tokens, "excInhib")
+    else
+        push!(flag_tokens, "wslope")
+    end
     if vary_C_by_cue_type
         push!(flag_tokens, "Ccue")
     end
@@ -219,21 +225,31 @@ function run_analysis()
     println("  C: Capacity parameter (drift rate scaling)")
     if weighting_mode == :exponential
         println("  w_slope: Reward weight slope (θ in MIS theory: exp(θ * r / r_max))")
-    else
+    elseif weighting_mode == :free
         println("  w2/w3/w4: Free reward weights (w1 fixed at 1.0 baseline)")
+    elseif weighting_mode == :excitation_inhibition
+        println("  w_slope: Baseline reward weight slope (used for exponential baseline)")
+        println("  Ge: Excitatory gain (>1 amplifies highest reward cue in 2-cue conditions)")
+        println("  Gi: Inhibitory gain (<1 suppresses lower reward cues in 2-cue conditions)")
     end
     println("  A: Maximum start point variability in LBA")
     println("  k: Threshold gap in LBA (b - A, where b is decision threshold)")
     println("  t0: Non-decision time in LBA")
-    if weighting_mode == :exponential
+    if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
         println("  r_max: Maximum reward value across entire experiment (fixed, not optimized)")
     end
 
     println("\n--- MIS THEORY PARAMETERS ---")
     if weighting_mode == :exponential
         println("  Weight calculation: w_i = exp(w_slope * r_i / r_max)")
-    else
+    elseif weighting_mode == :free
         println("  Weight calculation: w_i pulled from fitted [1.0, w2, w3, w4] lookup")
+    elseif weighting_mode == :excitation_inhibition
+        println("  Weight calculation (1-cue): w_i = exp(w_slope * r_i / r_max) [baseline]")
+        println("  Weight calculation (2-cue):")
+        println("    - Highest reward cue: w_target = Ge * exp(w_slope * r_target / r_max)")
+        println("    - Lower reward cues: w_distractor = Gi * exp(w_slope * r_distractor / r_max)")
+        println("    - Non-cued items (reward 0): w_noncue = exp(w_slope * 0 / r_max) [baseline]")
     end
     println("  Relative weights: rel_w_i = w_i / Σw_j")
     println("  Drift rates: ν_i = C * rel_w_i")
@@ -245,6 +261,20 @@ function run_analysis()
     println("\n--- OPTIMIZATION INFO ---")
     println("  Negative log-likelihood: $(round(Optim.minimum(result), digits=2))")
     println("  Converged: $(Optim.converged(result))")
+    
+    # Threshold validation check for cognitive control theory
+    if vary_k_by_cue_type && haskey(layout.idx_k, :single) && haskey(layout.idx_k, :double)
+        k_single_val = best_params[layout.idx_k[:single]]
+        k_double_val = best_params[layout.idx_k[:double]]
+        if k_double_val <= k_single_val
+            println("\n⚠️  WARNING: Threshold validation failed!")
+            println("   k_double ($(round(k_double_val, digits=6))) should be > k_single ($(round(k_single_val, digits=6)))")
+            println("   According to cognitive control theory, 2-cue conditions require higher thresholds.")
+        else
+            println("\n✓ Threshold validation passed: k_double ($(round(k_double_val, digits=6))) > k_single ($(round(k_single_val, digits=6)))")
+        end
+    end
+    
     println("=" ^ 70)
 
     # Step 4: Save results

@@ -601,6 +601,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
     # Unpack parameters and constraints based on weighting_mode
     w_slope = 0.0
     w2 = w3 = w4 = 0.0
+    Ge = Gi = 1.0
     if layout === nothing
         # Fallback to positional parsing for legacy callers
         p_idx = 1
@@ -609,6 +610,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         p_idx += vary_C_by_cue_type ? 1 : 0
         w_slope = 0.0
         w2 = w3 = w4 = 0.0
+        Ge = Gi = 1.0
         k_single = 0.0
         k_double = 0.0
         if weighting_mode == :exponential
@@ -635,8 +637,21 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[p_idx]; p_idx += 1
+            Ge = params[p_idx]; p_idx += 1
+            Gi = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
         else
-            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition.")
         end
 
         # Optional contaminant parameters from search
@@ -652,10 +667,14 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
     else
         if weighting_mode == :exponential
             w_slope = params[layout.idx_w[:w_slope]]
-        else
+        elseif weighting_mode == :free
             w2 = params[layout.idx_w[:w2]]
             w3 = params[layout.idx_w[:w3]]
             w4 = params[layout.idx_w[:w4]]
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[layout.idx_w[:w_slope]]
+            Ge = params[layout.idx_w[:Ge]]
+            Gi = params[layout.idx_w[:Gi]]
         end
         A = params[layout.idx_A]
 
@@ -674,6 +693,13 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
             return Inf
         end
+        
+        # Validate Ge and Gi for excitation_inhibition mode
+        if weighting_mode == :excitation_inhibition
+            if Ge <= 0 || Gi <= 0
+                return Inf
+            end
+        end
 
         contam_alpha_use = layout.contam_alpha_fixed
         contam_rt_max_use = layout.contam_rt_fixed
@@ -689,8 +715,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
 
     total_neg_ll = 0.0
 
-    # Compute r_max only for exponential mode
-    if weighting_mode == :exponential
+    # Compute r_max for exponential and excitation_inhibition modes
+    if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
         if isnothing(r_max)
             r_max = 0.0
             for rewards in df.ParsedRewards
@@ -708,7 +734,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         r_max = isnothing(r_max) ? 4.0 : r_max
     end
 
-    w_slope_normalized = weighting_mode == :exponential ? (w_slope / r_max) : 0.0 # only used for exponential mode
+    w_slope_normalized = (weighting_mode == :exponential || weighting_mode == :excitation_inhibition) ? (w_slope / r_max) : 0.0
     weight_lookup = nothing #weight_lookup is only used for free mode
     if weighting_mode == :free
         val_type = typeof(C_single)
@@ -737,9 +763,39 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         if haskey(drift_cache, key)
             drift_rates = drift_cache[key]
         else
-            weights = weighting_mode == :exponential ?
-                      exp.(w_slope_normalized .* rewards) :
-                      [get(weight_lookup, r, default_weight) for r in rewards]
+            # Calculate baseline weights
+            if weighting_mode == :exponential
+                weights = exp.(w_slope_normalized .* rewards)
+            elseif weighting_mode == :free
+                weights = [get(weight_lookup, r, default_weight) for r in rewards]
+            elseif weighting_mode == :excitation_inhibition
+                # For excitation_inhibition mode, use exponential as baseline
+                weights = exp.(w_slope_normalized .* rewards)
+                
+                # Apply excitation/inhibition gains for 2-cue conditions
+                if cond_type == :double
+                    # Find highest reward cue
+                    max_reward_val = maximum(rewards)
+                    max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                    
+                    # Apply Ge to highest reward cue
+                    if !isnothing(max_reward_idx)
+                        weights[max_reward_idx] *= Ge
+                    end
+                    
+                    # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                    for (idx, r) in enumerate(rewards)
+                        if r > 0 && r < max_reward_val
+                            weights[idx] *= Gi
+                        end
+                        # Non-cued items (reward 0) keep baseline weight (already set above)
+                    end
+                end
+                # For 1-cue conditions, use baseline weights (no Ge/Gi applied)
+            else
+                error("Unknown weighting_mode: $weighting_mode")
+            end
+            
             rel_weights = weights ./ sum(weights)
             C_use = cond_type == :double ? C_double : C_single
             drift_rates = C_use .* rel_weights
@@ -828,8 +884,21 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[p_idx]; p_idx += 1
+            Ge = params[p_idx]; p_idx += 1
+            Gi = params[p_idx]; p_idx += 1
+            A = params[p_idx]; p_idx += 1
+            k_single = params[p_idx]; p_idx += 1
+            k_double = vary_k_by_cue_type ? params[p_idx] : k_single
+            p_idx += vary_k_by_cue_type ? 1 : 0
+            t0_single = params[p_idx]; p_idx += 1
+            t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
+            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+                return Inf
+            end
         else
-            error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free.")
+            error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition.")
         end
 
         contam_alpha_use = contaminant_alpha
@@ -844,10 +913,14 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
     else
         if weighting_mode == :exponential
             w_slope = params[layout.idx_w[:w_slope]]
-        else
+        elseif weighting_mode == :free
             w2 = params[layout.idx_w[:w2]]
             w3 = params[layout.idx_w[:w3]]
             w4 = params[layout.idx_w[:w4]]
+        elseif weighting_mode == :excitation_inhibition
+            w_slope = params[layout.idx_w[:w_slope]]
+            Ge = params[layout.idx_w[:Ge]]
+            Gi = params[layout.idx_w[:Gi]]
         end
         A = params[layout.idx_A]
 
@@ -865,6 +938,13 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
             return Inf
         end
+        
+        # Validate Ge and Gi for excitation_inhibition mode
+        if weighting_mode == :excitation_inhibition
+            if Ge <= 0 || Gi <= 0
+                return Inf
+            end
+        end
 
         contam_alpha_use = layout.contam_alpha_fixed
         contam_rt_max_use = layout.contam_rt_fixed
@@ -880,8 +960,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         end
     end
 
-    # r_max is only used for exponential mode
-    if weighting_mode == :exponential
+    # r_max is used for exponential and excitation_inhibition modes
+    if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
         if isnothing(r_max)
             r_max = 4.0
         end
@@ -890,7 +970,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
     end
 
     total_neg_ll = 0.0
-    w_slope_normalized = weighting_mode == :exponential ? (w_slope / r_max) : 0.0
+    w_slope_normalized = (weighting_mode == :exponential || weighting_mode == :excitation_inhibition) ? (w_slope / r_max) : 0.0
     weight_lookup = nothing
     if weighting_mode == :free
         val_type = typeof(C_single)
@@ -913,9 +993,39 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         end
         cond_type_use = cond_type == :all ? :single : cond_type
 
-        weights = weighting_mode == :exponential ?
-                  exp.(w_slope_normalized .* rewards) :
-                  [get(weight_lookup, r, default_weight) for r in rewards]
+        # Calculate baseline weights
+        if weighting_mode == :exponential
+            weights = exp.(w_slope_normalized .* rewards)
+        elseif weighting_mode == :free
+            weights = [get(weight_lookup, r, default_weight) for r in rewards]
+        elseif weighting_mode == :excitation_inhibition
+            # For excitation_inhibition mode, use exponential as baseline
+            weights = exp.(w_slope_normalized .* rewards)
+            
+            # Apply excitation/inhibition gains for 2-cue conditions
+            if cond_type_use == :double
+                # Find highest reward cue
+                max_reward_val = maximum(rewards)
+                max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                
+                # Apply Ge to highest reward cue
+                if !isnothing(max_reward_idx)
+                    weights[max_reward_idx] *= Ge
+                end
+                
+                # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                for (idx_w, r) in enumerate(rewards)
+                    if r > 0 && r < max_reward_val
+                        weights[idx_w] *= Gi
+                    end
+                    # Non-cued items (reward 0) keep baseline weight (already set above)
+                end
+            end
+            # For 1-cue conditions, use baseline weights (no Ge/Gi applied)
+        else
+            error("Unknown weighting_mode: $weighting_mode")
+        end
+        
         rel_weights = weights ./ sum(weights)
         C_use = cond_type_use == :double ? C_double : C_single
         drift_rates = C_use .* rel_weights

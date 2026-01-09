@@ -95,7 +95,7 @@ struct AllConditionsLayout
     contam_rt_fixed::Float64
 end
 
-# Default weighting mode for reward transforms (either :exponential or :free)
+# Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
 const DEFAULT_WEIGHTING_MODE = :free
 
 # Parameter bounds (lower, upper, x0) centralized here
@@ -106,6 +106,9 @@ const W_FREE_BOUNDS_ALLCONDITIONS = Dict(
     :w3 => (1.0, 50.0, 5.0),
     :w4 => (1.0, 50.0, 10.0),
 )
+# Excitation/inhibition gains for cognitive control theory (excitation_inhibition mode)
+const GE_BOUNDS_ALLCONDITIONS = (1.0, 5.0, 1.5)  # Excitatory gain (Ge > 1 amplifies highest reward)
+const GI_BOUNDS_ALLCONDITIONS = (0.1, 1.0, 0.5)  # Inhibitory gain (Gi < 1 suppresses lower reward)
 const A_BOUNDS_ALLCONDITIONS = (0.01, 1.0, 0.2)
 const K_BOUNDS_ALLCONDITIONS = (0.05, 1.0, 0.2)
 const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
@@ -253,8 +256,18 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
             bnds = W_FREE_BOUNDS_ALLCONDITIONS[sym]
             idx_w[sym] = pushp!(String(sym), bnds...)
         end
+    elseif weighting_mode == :excitation_inhibition
+        # For excitation_inhibition mode, we need a baseline weighting mode
+        # Use exponential as the baseline (could also use free, but exponential is simpler)
+        ws_lo, ws_hi, ws_start = W_SLOPE_BOUNDS_ALLCONDITIONS
+        idx_w[:w_slope] = pushp!("w_slope", ws_lo, ws_hi, ws_start)
+        # Add excitation and inhibition gains
+        ge_lo, ge_hi, ge_start = GE_BOUNDS_ALLCONDITIONS
+        idx_w[:Ge] = pushp!("Ge", ge_lo, ge_hi, ge_start)
+        gi_lo, gi_hi, gi_start = GI_BOUNDS_ALLCONDITIONS
+        idx_w[:Gi] = pushp!("Gi", gi_lo, gi_hi, gi_start)
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free")
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition")
     end
 
     # A (shared)
