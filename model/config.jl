@@ -111,13 +111,13 @@ const K_BOUNDS_ALLCONDITIONS = (0.05, 1.0, 0.2)
 const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
 
 # Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
-const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
-const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = true
-const VARY_K_BY_CUECOUNT_ALLCONDITIONS = true
+const VARY_C_BY_CUECOUNT_ALLCONDITIONS = false
+const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = false
+const VARY_K_BY_CUECOUNT_ALLCONDITIONS = false
 
 # Optional contaminant (uniform) floor to reduce catastrophic penalties from long tails
 const USE_CONTAMINANT_FLOOR_ALLCONDITIONS = false
-const ESTIMATE_CONTAMINANT_ALLCONDITIONS = true  # when true, alpha/rt_max are fitted parameters
+const ESTIMATE_CONTAMINANT_ALLCONDITIONS = false  # when true, alpha/rt_max are fitted parameters
 const VARY_CONTAM_BY_CUE_ALLCONDITIONS = false
 const CONTAM_ALPHA_BOUNDS_ALLCONDITIONS = (0.0, 0.1, 0.02)
 const CONTAM_RT_MAX_BOUNDS_ALLCONDITIONS = (1.5, 4.0, 3.0)  # seconds
@@ -157,7 +157,7 @@ const OUTPUT_PLOT_DUAL = "model_fit_plot_dual.png"
 
 # All-conditions (fit-mis-model-allconditions.jl)
 const PARTICIPANT_ID_ALLCONDITIONS = 1  # Options: 1, 2, or 3
-const DATASET_VERSION_ALLCONDITIONS = 2  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
+const DATASET_VERSION_ALLCONDITIONS = 1  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
 const WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS = nothing  # leave as `nothing` to use DEFAULT_WEIGHTING_MODE
 const OUTPUT_CSV_ALLCONDITIONS = "model_fit_results_allconditions.csv"
 const OUTPUT_PLOT_ALLCONDITIONS = "model_fit_plot_allconditions.png"
