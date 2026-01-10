@@ -71,7 +71,8 @@ function mis_lba_allconditions_loglike_fast(params, preprocessed_data::Preproces
     C, w_slope, A, k, t0 = params
 
     # Constraints
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+    # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || k<=A || t0<=0 || t0 < 0.01
         return Inf
     end
 

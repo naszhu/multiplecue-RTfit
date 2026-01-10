@@ -89,7 +89,8 @@ function mis_lba_dualmodes_loglike(params::Vector{<:Real}, df::DataFrame, layout
         k_slow = _fetch_param(params, layout.idx_k, layout.vary_k_by_mode, layout.vary_k_by_cue, :slow, cond)
         A_use  = _fetch_param(params, layout.idx_A, layout.vary_A_by_mode, layout.vary_A_by_cue, :shared, cond)
         t0_use = _fetch_param(params, layout.idx_t0, layout.vary_t0_by_mode, layout.vary_t0_by_cue, :shared, cond)
-        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || A_use<=0 || t0_use<=0 || t0_use<0.01
+        # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || k_fast<=A_use || k_slow<=A_use || A_use<=0 || t0_use<=0 || t0_use<0.01
             return Inf
         end
 
@@ -171,7 +172,8 @@ function mis_lba_dualmodes_loglike(params::Vector{<:Real}, preprocessed::Preproc
         k_slow = params[layout.idx_k[mode_key(layout.vary_k_by_mode,:slow)][cue_key(layout.vary_k_by_cue,cond)]]
         A_use  = params[layout.idx_A[mode_key(layout.vary_A_by_mode,:shared)][cue_key(layout.vary_A_by_cue,cond)]]
         t0_use = params[layout.idx_t0[mode_key(layout.vary_t0_by_mode,:shared)][cue_key(layout.vary_t0_by_cue,cond)]]
-        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || A_use<=0 || t0_use<=0 || t0_use<0.01
+        # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+        if C_fast<=0 || C_slow<=0 || k_fast<=0 || k_slow<=0 || k_fast<=A_use || k_slow<=A_use || A_use<=0 || t0_use<=0 || t0_use<0.01
             return Inf
         end
 
@@ -291,7 +293,8 @@ function mis_lba_mixture_loglike(params::Vector{<:Real}, df::DataFrame)::Float64
     C, w_slope, A, k, t0, p_exp, mu_exp, sig_exp = params
 
     # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01 ||
+    # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || k<=A || t0<=0 || t0 < 0.01 ||
        p_exp<0 || p_exp>0.99 || sig_exp<=0
         return Inf
     end
@@ -369,8 +372,9 @@ function mis_lba_dual_mixture_loglike(params::Vector{<:Real}, df::DataFrame; r_m
     C, w_slope, A1, k1, t0_1, A2, k2, t0_2, p_mix = params
 
     # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A1<=0 || k1<=0 || t0_1<=0 || t0_1 < 0.01 ||
-       A2<=0 || k2<=0 || t0_2<=0 || t0_2 < 0.01 || p_mix<0 || p_mix>0.99
+    # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+    if C<=0 || w_slope<0 || A1<=0 || k1<=0 || k1<=A1 || t0_1<=0 || t0_1 < 0.01 ||
+       A2<=0 || k2<=0 || k2<=A2 || t0_2<=0 || t0_2 < 0.01 || p_mix<0 || p_mix>0.99
         return Inf
     end
 
@@ -480,7 +484,8 @@ function mis_lba_single_loglike(params::Vector{<:Real}, df::DataFrame; r_max::Un
     C, w_slope, A, k, t0 = params
 
     # Constraints (strict check to prevent integrator errors)
-    if C<=0 || w_slope<0 || A<=0 || k<=0 || t0<=0 || t0 < 0.01
+    # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+    if C<=0 || w_slope<0 || A<=0 || k<=0 || k<=A || t0<=0 || t0 < 0.01
         return Inf
     end
 
@@ -621,7 +626,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         elseif weighting_mode == :free
@@ -634,7 +640,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         elseif weighting_mode == :excitation_inhibition
@@ -647,7 +654,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         else
@@ -690,7 +698,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         t0_single = gett0(:single)
         t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
 
-        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
+        # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || k_single <= A || k_double <= A || t0_single < 0.01 || t0_double < 0.01
             return Inf
         end
         
@@ -868,7 +877,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w_slope<0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         elseif weighting_mode == :free
@@ -881,7 +891,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w2<=0 || w3<=0 || w4<=0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         elseif weighting_mode == :excitation_inhibition
@@ -894,7 +905,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             p_idx += vary_k_by_cue_type ? 1 : 0
             t0_single = params[p_idx]; p_idx += 1
             t0_double = vary_t0_by_cue_type ? params[p_idx] : t0_single
-            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_double<=0 || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
+            # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+            if C_single<=0 || C_double<=0 || w_slope<0 || Ge<=0 || Gi<=0 || A<=0 || k_single<=0 || k_single<=A || k_double<=0 || k_double<=A || t0_single<=0 || t0_single < 0.01 || t0_double<=0 || t0_double < 0.01
                 return Inf
             end
         else
@@ -935,7 +947,8 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         t0_single = gett0(:single)
         t0_double = haskey(layout.idx_t0, :double) ? gett0(:double) : t0_single
 
-        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || t0_single < 0.01 || t0_double < 0.01
+        # k > A ensures threshold (A+k) is meaningfully above max starting point (A)
+        if any(x -> x <= 0, (C_single, C_double, A, k_single, k_double, t0_single, t0_double)) || k_single <= A || k_double <= A || t0_single < 0.01 || t0_double < 0.01
             return Inf
         end
         
