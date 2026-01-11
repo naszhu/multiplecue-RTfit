@@ -96,7 +96,7 @@ struct AllConditionsLayout
 end
 
 # Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
-const DEFAULT_WEIGHTING_MODE = :excitation_inhibition
+const DEFAULT_WEIGHTING_MODE = :free
 
 # Parameter bounds (lower, upper, x0) centralized here
 const C_BOUNDS_ALLCONDITIONS = (1.0, 30.0, 10.0)
@@ -110,7 +110,7 @@ const W_FREE_BOUNDS_ALLCONDITIONS = Dict(
 const GE_BOUNDS_ALLCONDITIONS = (1.0, 5.0, 1.5)  # Excitatory gain (Ge > 1 amplifies highest reward)
 const GI_BOUNDS_ALLCONDITIONS = (0.1, 1.0, 0.5)  # Inhibitory gain (Gi < 1 suppresses lower reward)
 const A_BOUNDS_ALLCONDITIONS = (0.01, 1.0, 0.2)
-const K_BOUNDS_ALLCONDITIONS = (0.05, 1.0, 0.2)
+const K_BOUNDS_ALLCONDITIONS = (0.05, 3.0, 0.2)
 const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
 
 # Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
