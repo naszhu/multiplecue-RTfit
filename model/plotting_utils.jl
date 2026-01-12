@@ -1681,6 +1681,17 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
         C_use = cond_type == :double ? C_double : C_single
         k_use = cond_type == :double ? k_double : k_single
         t0_use = cond_type == :double ? t0_double : t0_single
+        
+        # Determine contaminant alpha for this condition
+        alpha_cond = if use_contaminant
+            if layout !== nothing && estimate_contaminant && vary_contam_by_cue && haskey(layout.idx_contam_alpha, cond_type)
+                params[layout.idx_contam_alpha[cond_type]]
+            else
+                contam_alpha_use
+            end
+        else
+            0.0
+        end
 
         # Compute r_max if exponential or excitation_inhibition weighting is used
         if weighting_mode == :exponential || weighting_mode == :excitation_inhibition
