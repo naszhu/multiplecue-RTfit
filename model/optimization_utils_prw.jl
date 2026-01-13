@@ -4,6 +4,7 @@
 
 using DataFrames
 using Optim
+using ADTypes
 
 # Note: config_prw.jl must be included before this file
 
@@ -37,7 +38,7 @@ function fit_model_prw(data::Union{DataFrame,Any}, objective_func::Function;
     println("  max_iterations: $(opt_config.max_iterations)")
     println("  time_limit: $(actual_time_limit)s")
 
-    res = optimize(func, lower, upper, x0, Fminbox(LBFGS()), opt_options; autodiff=:finite)
+    res = optimize(func, lower, upper, x0, Fminbox(LBFGS()), opt_options; autodiff=ADTypes.AutoFiniteDiff())
 
     best = Optim.minimizer(res)
     println("\n--- Optimization Complete ---")
