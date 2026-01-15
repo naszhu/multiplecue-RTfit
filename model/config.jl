@@ -96,7 +96,7 @@ struct AllConditionsLayout
 end
 
 # Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
-const DEFAULT_WEIGHTING_MODE = :free
+const DEFAULT_WEIGHTING_MODE = :excitation_inhibition
 
 # Parameter bounds (lower, upper, x0) centralized here
 const C_BOUNDS_ALLCONDITIONS = (1.0, 30.0, 10.0)
@@ -159,7 +159,7 @@ const OUTPUT_CSV_DUAL = joinpath(@__DIR__, "outputdata", "model_fit_results_dual
 const OUTPUT_PLOT_DUAL = "model_fit_plot_dual.png"
 
 # All-conditions (fit-mis-model-allconditions.jl)
-const PARTICIPANT_ID_ALLCONDITIONS = 1  # Options: 1, 2, or 3
+const PARTICIPANT_ID_ALLCONDITIONS = 2  # Options: 1, 2, or 3
 const DATASET_VERSION_ALLCONDITIONS = 1  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
 const WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS = nothing  # leave as `nothing` to use DEFAULT_WEIGHTING_MODE
 const OUTPUT_CSV_ALLCONDITIONS = "model_fit_results_allconditions.csv"
