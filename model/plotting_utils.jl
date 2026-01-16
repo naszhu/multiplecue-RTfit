@@ -1460,26 +1460,36 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
             ws = [get(weight_lookup, r, default_weight) for r in rewards]
         elseif weighting_mode == :excitation_inhibition
             # Use exponential as baseline
+            # Compute baseline weights first (no Ge/Gi applied yet)
             ws = exp.(w_slope .* rewards ./ r_max)
-            # Apply excitation/inhibition gains for 2-cue conditions
-            if cue_condition_type == :double
-                max_reward_val = maximum(rewards)
-                max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
-                # Apply Ge to highest reward cue
-                if !isnothing(max_reward_idx)
-                    ws[max_reward_idx] *= Ge
-                end
-                # Apply Gi to all other cues with reward > 0 (lower reward cues)
-                for (idx_w, r) in enumerate(rewards)
-                    if r > 0 && r < max_reward_val
-                        ws[idx_w] *= Gi
-                    end
-                end
-            end
         else
             error("Unknown weighting_mode: $weighting_mode")
         end
+        
+        # Normalize weights and compute baseline drift rates
         vs = C_use .* (ws ./ sum(ws))
+        
+        # Apply excitation/inhibition gains DIRECTLY to drift rates for 2-cue conditions
+        # This ensures the control mechanism has a direct, un-diluted effect on accumulation rates
+        # (Decision Control Theory: reactive control modulates drift rates directly)
+        if weighting_mode == :excitation_inhibition && cue_condition_type == :double
+            # Find highest reward cue (target)
+            max_reward_val = maximum(rewards)
+            max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+            
+            # Apply Ge (excitatory gain) to highest reward cue's drift rate
+            if !isnothing(max_reward_idx)
+                vs[max_reward_idx] *= Ge
+            end
+            
+            # Apply Gi (inhibitory gain) to all other cues with reward > 0 (distractors)
+            for (idx, r) in enumerate(rewards)
+                if r > 0 && r < max_reward_val
+                    vs[idx] *= Gi
+                end
+                # Non-cued items (reward 0) keep baseline drift rate (already set above)
+            end
+        end
 
         # Single LBA component with SHARED parameters
         lba = LBA(ν=vs, A=A, k=k_use, τ=t0_use)
@@ -1754,27 +1764,39 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
                 ws = [get(weight_lookup, r, default_weight) for r in rewards]
             elseif weighting_mode == :excitation_inhibition
                 # Use exponential as baseline
+                # Compute baseline weights first (no Ge/Gi applied yet)
                 ws = exp.(w_slope .* rewards ./ r_max_use)
-                # Apply excitation/inhibition gains for 2-cue conditions
-                cond_type_use = cue_condition_type_fn(cc)
-                if cond_type_use == :double
-                    max_reward_val = maximum(rewards)
-                    max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
-                    # Apply Ge to highest reward cue
-                    if !isnothing(max_reward_idx)
-                        ws[max_reward_idx] *= Ge
-                    end
-                    # Apply Gi to all other cues with reward > 0 (lower reward cues)
-                    for (idx_w, r) in enumerate(rewards)
-                        if r > 0 && r < max_reward_val
-                            ws[idx_w] *= Gi
-                        end
-                    end
-                end
             else
                 error("Unknown weighting_mode: $weighting_mode")
             end
+            
+            # Normalize weights and compute baseline drift rates
             vs = C_use .* (ws ./ sum(ws))
+            
+            # Apply excitation/inhibition gains DIRECTLY to drift rates for 2-cue conditions
+            # This ensures the control mechanism has a direct, un-diluted effect on accumulation rates
+            # (Decision Control Theory: reactive control modulates drift rates directly)
+            if weighting_mode == :excitation_inhibition
+                cond_type_use = cue_condition_type_fn(cc)
+                if cond_type_use == :double
+                    # Find highest reward cue (target)
+                    max_reward_val = maximum(rewards)
+                    max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                    
+                    # Apply Ge (excitatory gain) to highest reward cue's drift rate
+                    if !isnothing(max_reward_idx)
+                        vs[max_reward_idx] *= Ge
+                    end
+                    
+                    # Apply Gi (inhibitory gain) to all other cues with reward > 0 (distractors)
+                    for (idx, r) in enumerate(rewards)
+                        if r > 0 && r < max_reward_val
+                            vs[idx] *= Gi
+                        end
+                        # Non-cued items (reward 0) keep baseline drift rate (already set above)
+                    end
+                end
+            end
 
             lba = LBA(ν=vs, A=A, k=k_use, τ=t0_use)
 
