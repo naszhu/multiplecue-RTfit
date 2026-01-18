@@ -48,6 +48,7 @@ const VARY_CONTAM_RT_BY_MODE = false
 const VARY_CONTAM_RT_BY_CUE = false
 const CONTAM_ALPHA_BOUNDS = (0.0, 0.2, 0.02)    # (lower, upper, x0)
 const CONTAM_RT_BOUNDS    = (1.0, 4.0, 3.0)     # (lower, upper, x0) seconds
+const W0_BOUNDS_DUALMODES = (1e-12, 1.0, 1e-10)  # Weight for non-reward accumulators (reward = 0)
 
 struct DualModesParams
     lower::Vector{Float64}
@@ -77,6 +78,7 @@ struct DualModesLayout
     idx_t0::Dict{Symbol,Dict{Symbol,Int}}
     idx_pi::Dict{Symbol,Int}
     idx_w::Dict{Symbol,Int}
+    idx_w0::Int  # Weight for non-reward accumulators (reward = 0)
     idx_A::Dict{Symbol,Dict{Symbol,Int}}
     idx_contam_alpha::Dict{Symbol,Dict{Symbol,Int}}
     idx_contam_rt::Dict{Symbol,Dict{Symbol,Int}}
@@ -159,6 +161,10 @@ function build_dualmodes_params(weighting_mode::Symbol=get_weighting_mode();
         error("Unknown weighting_mode: $weighting_mode")
     end
 
+    # w0: weight for non-reward accumulators (reward = 0) - independent of weighting mode
+    w0_lo, w0_hi, w0_start = W0_BOUNDS_DUALMODES
+    idx_w0 = push_param!("w0", w0_lo, w0_hi, w0_start)
+
     # A
     A_bounds = (0.01, 1.0, 0.2)
     for mode in mode_keys(vary_A_by_mode)
@@ -226,7 +232,7 @@ function build_dualmodes_params(weighting_mode::Symbol=get_weighting_mode();
         end
     end
 
-    layout = DualModesLayout(weighting_mode, vary_C_by_mode, vary_C_by_cue, vary_k_by_mode, vary_k_by_cue, vary_t0_by_mode, vary_t0_by_cue, vary_A_by_mode, vary_A_by_cue, vary_pi_by_cue, use_contaminant, estimate_contaminant, vary_contam_alpha_by_mode, vary_contam_alpha_by_cue, vary_contam_rt_by_mode, vary_contam_rt_by_cue, idx_C, idx_k, idx_t0, idx_pi, idx_w, idx_A, idx_contam_alpha, idx_contam_rt, CONTAM_ALPHA_BOUNDS[3], CONTAM_RT_BOUNDS[3])
+    layout = DualModesLayout(weighting_mode, vary_C_by_mode, vary_C_by_cue, vary_k_by_mode, vary_k_by_cue, vary_t0_by_mode, vary_t0_by_cue, vary_A_by_mode, vary_A_by_cue, vary_pi_by_cue, use_contaminant, estimate_contaminant, vary_contam_alpha_by_mode, vary_contam_alpha_by_cue, vary_contam_rt_by_mode, vary_contam_rt_by_cue, idx_C, idx_k, idx_t0, idx_pi, idx_w, idx_w0, idx_A, idx_contam_alpha, idx_contam_rt, CONTAM_ALPHA_BOUNDS[3], CONTAM_RT_BOUNDS[3])
     return DualModesParams(lower, upper, x0), layout, names
 end
 

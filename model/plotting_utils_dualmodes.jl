@@ -58,9 +58,10 @@ function mixture_rt_plot(data::DataFrame, params::Vector{<:Real}, layout; cue_co
             w_slope = params[layout.idx_w[:w_slope]]
             exp.(w_slope .* rewards ./ r_max)
         else
+            w0 = params[layout.idx_w0]
             w2 = params[layout.idx_w[:w2]]; w3 = params[layout.idx_w[:w3]]; w4 = params[layout.idx_w[:w4]]
-            wlu = Dict(1.0=>1.0,2.0=>w2,3.0=>w3,4.0=>w4,0.0=>1e-10)
-            [get(wlu,r,1e-10) for r in rewards]
+            wlu = Dict(1.0=>1.0,2.0=>w2,3.0=>w3,4.0=>w4,0.0=>w0)
+            [get(wlu,r,w0) for r in rewards]
         end
         rel = ws ./ sum(ws)
         drift_fast = C_fast .* rel
@@ -137,9 +138,10 @@ function accuracy_plot_dualmodes(condition_data::Dict{Any,DataFrame}, params::Ve
                 w_slope = params[layout.idx_w[:w_slope]]
                 exp.(w_slope .* rewards ./ r_max)
             else
+                w0 = params[layout.idx_w0]
                 w2 = params[layout.idx_w[:w2]]; w3=params[layout.idx_w[:w3]]; w4=params[layout.idx_w[:w4]]
-                wlu = Dict(1.0=>1.0,2.0=>w2,3.0=>w3,4.0=>w4,0.0=>1e-10)
-                [get(wlu,r,1e-10) for r in rewards]
+                wlu = Dict(1.0=>1.0,2.0=>w2,3.0=>w3,4.0=>w4,0.0=>w0)
+                [get(wlu,r,w0) for r in rewards]
             end
             rel = ws ./ sum(ws)
             C_fast = fetch(layout.idx_C, layout.vary_C_by_mode, layout.vary_C_by_cue, :fast, cond_type)

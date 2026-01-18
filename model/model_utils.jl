@@ -43,20 +43,21 @@ function _fetch_param(params, dict, vary_mode::Bool, vary_cue::Bool, mode::Symbo
 end
 
 function _weight_components(params, layout, r_max, rewards)
+    w0 = params[layout.idx_w0]
     if layout.weighting_mode == :exponential
         w_slope = params[layout.idx_w[:w_slope]]
         r_use = isnothing(r_max) ? 4.0 : r_max
         w_slope_normalized = w_slope / r_use
         weights = exp.(w_slope_normalized .* rewards)
-        return weights, nothing, 0.0
+        return weights, nothing, w0
     else
         w2 = params[layout.idx_w[:w2]]
         w3 = params[layout.idx_w[:w3]]
         w4 = params[layout.idx_w[:w4]]
         if w2<=0 || w3<=0 || w4<=0
-            return nothing, nothing, 0.0
+            return nothing, nothing, w0
         end
-        weight_lookup = Dict{Float64, Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10)
+        weight_lookup = Dict{Float64, Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>w0)
         default_weight = weight_lookup[0.0]
         return nothing, weight_lookup, default_weight
     end
@@ -143,9 +144,10 @@ function mis_lba_dualmodes_loglike(params::Vector{<:Real}, preprocessed::Preproc
     cond_types = isnothing(cue_condition_types) ? preprocessed.group_condition_types : cue_condition_types
     weighting_mode = layout.weighting_mode
 
+    w0 = params[layout.idx_w0]
     w_slope_normalized = 0.0
     weight_lookup = nothing
-    default_weight = 1e-10
+    default_weight = w0
     if weighting_mode == :exponential
         r_use = isnothing(r_max) ? 4.0 : r_max
         w_slope_normalized = params[layout.idx_w[:w_slope]] / r_use
@@ -156,7 +158,7 @@ function mis_lba_dualmodes_loglike(params::Vector{<:Real}, preprocessed::Preproc
         if w2<=0 || w3<=0 || w4<=0
             return Inf
         end
-        weight_lookup = Dict{Float64,Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10)
+        weight_lookup = Dict{Float64,Float64}(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>w0)
         default_weight = weight_lookup[0.0]
     end
 
@@ -734,6 +736,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
         r_max = isnothing(r_max) ? 4.0 : r_max
     end
 
+    w0 = params[layout.idx_w0]
     w_slope_normalized = (weighting_mode == :exponential || weighting_mode == :excitation_inhibition) ? (w_slope / r_max) : 0.0
     weight_lookup = nothing #weight_lookup is only used for free mode
     if weighting_mode == :free
@@ -743,10 +746,10 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             2.0 => w2,
             3.0 => w3,
             4.0 => w4,
-            0.0 => convert(val_type, 1e-10)
+            0.0 => convert(val_type, w0)
         )
     end
-    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : w0
 
     # Cache for drift rates based on reward configurations
     drift_cache = Dict{Tuple{Vararg{Float64}}, Any}()
@@ -969,6 +972,7 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         r_max = isnothing(r_max) ? 1.0 : r_max
     end
 
+    w0 = params[layout.idx_w0]
     total_neg_ll = 0.0
     w_slope_normalized = (weighting_mode == :exponential || weighting_mode == :excitation_inhibition) ? (w_slope / r_max) : 0.0
     weight_lookup = nothing
@@ -979,10 +983,10 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             2.0 => w2,
             3.0 => w3,
             4.0 => w4,
-            0.0 => convert(val_type, 1e-10)
+            0.0 => convert(val_type, w0)
         )
     end
-    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : w0
 
     # Process each unique reward/condition configuration
     @inbounds for (idx, rewards) in enumerate(preprocessed.unique_rewards)

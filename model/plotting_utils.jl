@@ -1319,6 +1319,7 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
             Ge = params[layout.idx_w[:Ge]]
             Gi = params[layout.idx_w[:Gi]]
         end
+        w0 = params[layout.idx_w0]
         A = params[layout.idx_A]
         C_single = getC(:single)
         C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
@@ -1447,8 +1448,9 @@ function generate_plot_allconditions(data::DataFrame, params::Vector{<:Real}, ou
     end
 
     total_weight = 0.0
-    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
-    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+    w0 = layout === nothing ? 1e-10 : params[layout.idx_w0]  # Extract w0 if layout available, otherwise use default
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>w0) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : w0
     for (key, rewards) in reward_arrays
         weight = reward_counts[key]
         total_weight += weight
@@ -1644,6 +1646,7 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
             Ge = params[layout.idx_w[:Ge]]
             Gi = params[layout.idx_w[:Gi]]
         end
+        w0 = params[layout.idx_w0]
         A = params[layout.idx_A]
         C_single = getC(:single)
         C_double = haskey(layout.idx_C, :double) ? getC(:double) : C_single
@@ -1668,8 +1671,9 @@ function generate_overall_accuracy_plot_allconditions(condition_data::Dict{Any,D
     dt = t_grid[2] - t_grid[1]
 
     # Weight lookup for free mode (w1 fixed to 1.0)
-    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>1e-10) : nothing
-    default_weight = weighting_mode == :free ? weight_lookup[0.0] : 1e-10
+    w0 = layout === nothing ? 1e-10 : params[layout.idx_w0]  # Extract w0 if layout available, otherwise use default
+    weight_lookup = weighting_mode == :free ? Dict(1.0=>1.0, 2.0=>w2, 3.0=>w3, 4.0=>w4, 0.0=>w0) : nothing
+    default_weight = weighting_mode == :free ? weight_lookup[0.0] : w0
 
     # Sort conditions for consistent ordering
     sorted_conditions = sort(collect(keys(condition_data)))

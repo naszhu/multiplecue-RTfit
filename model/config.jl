@@ -88,6 +88,7 @@ struct AllConditionsLayout
     idx_k::Dict{Symbol,Int}
     idx_t0::Dict{Symbol,Int}
     idx_w::Dict{Symbol,Int}
+    idx_w0::Int  # Weight for non-reward accumulators (reward = 0)
     idx_A::Int
     idx_contam_alpha::Dict{Symbol,Int}
     idx_contam_rt::Dict{Symbol,Int}
@@ -96,7 +97,7 @@ struct AllConditionsLayout
 end
 
 # Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
-const DEFAULT_WEIGHTING_MODE = :excitation_inhibition
+const DEFAULT_WEIGHTING_MODE = :exponential
 
 # Parameter bounds (lower, upper, x0) centralized here
 const C_BOUNDS_ALLCONDITIONS = (1.0, 30.0, 10.0)
@@ -109,6 +110,7 @@ const W_FREE_BOUNDS_ALLCONDITIONS = Dict(
 # Excitation/inhibition gains for cognitive control theory (excitation_inhibition mode)
 const GE_BOUNDS_ALLCONDITIONS = (1.0, 5.0, 1.5)  # Excitatory gain (Ge > 1 amplifies highest reward)
 const GI_BOUNDS_ALLCONDITIONS = (0.1, 1.0, 0.5)  # Inhibitory gain (Gi < 1 suppresses lower reward)
+const W0_BOUNDS_ALLCONDITIONS = (1e-12, 1.0, 0.1)  # Weight for non-reward accumulators (reward = 0)
 const A_BOUNDS_ALLCONDITIONS = (0.01, 1.0, 0.2)
 const K_BOUNDS_ALLCONDITIONS = (0.05, 3.0, 0.2)
 const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
@@ -270,6 +272,10 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
         error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition")
     end
 
+    # w0: weight for non-reward accumulators (reward = 0) - independent of weighting mode
+    w0_lo, w0_hi, w0_start = W0_BOUNDS_ALLCONDITIONS
+    idx_w0 = pushp!("w0", w0_lo, w0_hi, w0_start)
+
     # A (shared)
     idx_A = pushp!("A", A_BOUNDS_ALLCONDITIONS...)
 
@@ -310,6 +316,7 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
         idx_k,
         idx_t0,
         idx_w,
+        idx_w0,
         idx_A,
         idx_contam_alpha,
         idx_contam_rt,
