@@ -273,14 +273,10 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
     # A (shared)
     idx_A = pushp!("A", A_BOUNDS_ALLCONDITIONS...)
 
-    # k (threshold parameter)
-    # According to Decision Control Theory: k_double > k_single (proactive control raises threshold for 2-cue conditions)
+    # k
     if vary_k_by_cue
-        k_lo, k_hi, k_start = K_BOUNDS_ALLCONDITIONS
-        idx_k[:single] = pushp!("k_single", k_lo, k_hi, k_start)
-        # Set higher initial value for k_double to encourage threshold raising in 2-cue conditions
-        k_double_start = min(k_hi, k_start * 1.5)  # 50% higher initial value, capped at upper bound
-        idx_k[:double] = pushp!("k_double", k_lo, k_hi, k_double_start)
+        idx_k[:single] = pushp!("k_single", K_BOUNDS_ALLCONDITIONS...)
+        idx_k[:double] = pushp!("k_double", K_BOUNDS_ALLCONDITIONS...)
     else
         idx_k[:all] = pushp!("k_all", K_BOUNDS_ALLCONDITIONS...)
     end

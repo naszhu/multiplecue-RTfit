@@ -770,8 +770,28 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
                 weights = [get(weight_lookup, r, default_weight) for r in rewards]
             elseif weighting_mode == :excitation_inhibition
                 # For excitation_inhibition mode, use exponential as baseline
-                # Compute baseline weights first (no Ge/Gi applied yet)
                 weights = exp.(w_slope_normalized .* rewards)
+                
+                # Apply excitation/inhibition gains for 2-cue conditions
+                if cond_type == :double
+                    # Find highest reward cue
+                    max_reward_val = maximum(rewards)
+                    max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                    
+                    # Apply Ge to highest reward cue
+                    if !isnothing(max_reward_idx)
+                        weights[max_reward_idx] *= Ge
+                    end
+                    
+                    # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                    for (idx, r) in enumerate(rewards)
+                        if r > 0 && r < max_reward_val
+                            weights[idx] *= Gi
+                        end
+                        # Non-cued items (reward 0) keep baseline weight (already set above)
+                    end
+                end
+                # For 1-cue conditions, use baseline weights (no Ge/Gi applied)
             else
                 error("Unknown weighting_mode: $weighting_mode")
             end
@@ -779,29 +799,6 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, df::DataFrame; la
             rel_weights = weights ./ sum(weights)
             C_use = cond_type == :double ? C_double : C_single
             drift_rates = C_use .* rel_weights
-            
-            # Apply excitation/inhibition gains DIRECTLY to drift rates for 2-cue conditions
-            # This ensures the control mechanism has a direct, un-diluted effect on accumulation rates
-            # (Decision Control Theory: reactive control modulates drift rates directly)
-            if weighting_mode == :excitation_inhibition && cond_type == :double
-                # Find highest reward cue (target)
-                max_reward_val = maximum(rewards)
-                max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
-                
-                # Apply Ge (excitatory gain) to highest reward cue's drift rate
-                if !isnothing(max_reward_idx)
-                    drift_rates[max_reward_idx] *= Ge
-                end
-                
-                # Apply Gi (inhibitory gain) to all other cues with reward > 0 (distractors)
-                for (idx, r) in enumerate(rewards)
-                    if r > 0 && r < max_reward_val
-                        drift_rates[idx] *= Gi
-                    end
-                    # Non-cued items (reward 0) keep baseline drift rate (already set above)
-                end
-            end
-            
             drift_cache[key] = drift_rates
         end
 
@@ -1003,8 +1000,28 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
             weights = [get(weight_lookup, r, default_weight) for r in rewards]
         elseif weighting_mode == :excitation_inhibition
             # For excitation_inhibition mode, use exponential as baseline
-            # Compute baseline weights first (no Ge/Gi applied yet)
             weights = exp.(w_slope_normalized .* rewards)
+            
+            # Apply excitation/inhibition gains for 2-cue conditions
+            if cond_type_use == :double
+                # Find highest reward cue
+                max_reward_val = maximum(rewards)
+                max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
+                
+                # Apply Ge to highest reward cue
+                if !isnothing(max_reward_idx)
+                    weights[max_reward_idx] *= Ge
+                end
+                
+                # Apply Gi to all other cues with reward > 0 (lower reward cues)
+                for (idx_w, r) in enumerate(rewards)
+                    if r > 0 && r < max_reward_val
+                        weights[idx_w] *= Gi
+                    end
+                    # Non-cued items (reward 0) keep baseline weight (already set above)
+                end
+            end
+            # For 1-cue conditions, use baseline weights (no Ge/Gi applied)
         else
             error("Unknown weighting_mode: $weighting_mode")
         end
@@ -1012,28 +1029,6 @@ function mis_lba_allconditions_loglike(params::Vector{<:Real}, preprocessed::Pre
         rel_weights = weights ./ sum(weights)
         C_use = cond_type_use == :double ? C_double : C_single
         drift_rates = C_use .* rel_weights
-        
-        # Apply excitation/inhibition gains DIRECTLY to drift rates for 2-cue conditions
-        # This ensures the control mechanism has a direct, un-diluted effect on accumulation rates
-        # (Decision Control Theory: reactive control modulates drift rates directly)
-        if weighting_mode == :excitation_inhibition && cond_type_use == :double
-            # Find highest reward cue (target)
-            max_reward_val = maximum(rewards)
-            max_reward_idx = findfirst(r -> r == max_reward_val, rewards)
-            
-            # Apply Ge (excitatory gain) to highest reward cue's drift rate
-            if !isnothing(max_reward_idx)
-                drift_rates[max_reward_idx] *= Ge
-            end
-            
-            # Apply Gi (inhibitory gain) to all other cues with reward > 0 (distractors)
-            for (idx, r) in enumerate(rewards)
-                if r > 0 && r < max_reward_val
-                    drift_rates[idx] *= Gi
-                end
-                # Non-cued items (reward 0) keep baseline drift rate (already set above)
-            end
-        end
 
         # Create LBA once for this configuration
         k_use = cond_type_use == :double ? k_double : k_single
