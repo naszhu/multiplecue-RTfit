@@ -88,6 +88,7 @@ struct AllConditionsLayout
     idx_k::Dict{Symbol,Int}
     idx_t0::Dict{Symbol,Int}
     idx_w::Dict{Symbol,Int}
+    idx_w0::Int  # Weight for non-reward accumulators (reward = 0)
     idx_A::Int
     idx_contam_alpha::Dict{Symbol,Int}
     idx_contam_rt::Dict{Symbol,Int}
@@ -95,8 +96,8 @@ struct AllConditionsLayout
     contam_rt_fixed::Float64
 end
 
-# Default weighting mode for reward transforms (either :exponential or :free)
-const DEFAULT_WEIGHTING_MODE = :free
+# Default weighting mode for reward transforms (either :exponential, :free, or :excitation_inhibition)
+const DEFAULT_WEIGHTING_MODE = :exponential
 
 # Parameter bounds (lower, upper, x0) centralized here
 const C_BOUNDS_ALLCONDITIONS = (1.0, 30.0, 10.0)
@@ -106,18 +107,22 @@ const W_FREE_BOUNDS_ALLCONDITIONS = Dict(
     :w3 => (1.0, 50.0, 5.0),
     :w4 => (1.0, 50.0, 10.0),
 )
+# Excitation/inhibition gains for cognitive control theory (excitation_inhibition mode)
+const GE_BOUNDS_ALLCONDITIONS = (1.0, 5.0, 1.5)  # Excitatory gain (Ge > 1 amplifies highest reward)
+const GI_BOUNDS_ALLCONDITIONS = (0.1, 1.0, 0.5)  # Inhibitory gain (Gi < 1 suppresses lower reward)
+const W0_BOUNDS_ALLCONDITIONS = (1e-12, 1.0, 0.1)  # Weight for non-reward accumulators (reward = 0)
 const A_BOUNDS_ALLCONDITIONS = (0.01, 1.0, 0.2)
-const K_BOUNDS_ALLCONDITIONS = (0.05, 1.0, 0.2)
+const K_BOUNDS_ALLCONDITIONS = (0.05, 3.0, 0.2)
 const T0_BOUNDS_ALLCONDITIONS = (0.05, 0.6, 0.25)
 
 # Allow C/t0/k to vary by cue-count (single vs double cue) in all-conditions run
-const VARY_C_BY_CUECOUNT_ALLCONDITIONS = true
-const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = true
+const VARY_C_BY_CUECOUNT_ALLCONDITIONS = false
+const VARY_T0_BY_CUECOUNT_ALLCONDITIONS = false
 const VARY_K_BY_CUECOUNT_ALLCONDITIONS = true
 
 # Optional contaminant (uniform) floor to reduce catastrophic penalties from long tails
 const USE_CONTAMINANT_FLOOR_ALLCONDITIONS = false
-const ESTIMATE_CONTAMINANT_ALLCONDITIONS = true  # when true, alpha/rt_max are fitted parameters
+const ESTIMATE_CONTAMINANT_ALLCONDITIONS = false  # when true, alpha/rt_max are fitted parameters
 const VARY_CONTAM_BY_CUE_ALLCONDITIONS = false
 const CONTAM_ALPHA_BOUNDS_ALLCONDITIONS = (0.0, 0.1, 0.02)
 const CONTAM_RT_MAX_BOUNDS_ALLCONDITIONS = (1.5, 4.0, 3.0)  # seconds
@@ -156,8 +161,8 @@ const OUTPUT_CSV_DUAL = joinpath(@__DIR__, "outputdata", "model_fit_results_dual
 const OUTPUT_PLOT_DUAL = "model_fit_plot_dual.png"
 
 # All-conditions (fit-mis-model-allconditions.jl)
-const PARTICIPANT_ID_ALLCONDITIONS = 1  # Options: 1, 2, or 3
-const DATASET_VERSION_ALLCONDITIONS = 2  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
+const PARTICIPANT_ID_ALLCONDITIONS = 2  # Options: 1, 2, or 3
+const DATASET_VERSION_ALLCONDITIONS = 1  # 1 = CPP002 (ParticipantCPP002-00X), 2 = CPP001 (CPP001 - subj X)
 const WEIGHTING_MODE_OVERRIDE_ALLCONDITIONS = nothing  # leave as `nothing` to use DEFAULT_WEIGHTING_MODE
 const OUTPUT_CSV_ALLCONDITIONS = "model_fit_results_allconditions.csv"
 const OUTPUT_PLOT_ALLCONDITIONS = "model_fit_plot_allconditions.png"
@@ -253,9 +258,23 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
             bnds = W_FREE_BOUNDS_ALLCONDITIONS[sym]
             idx_w[sym] = pushp!(String(sym), bnds...)
         end
+    elseif weighting_mode == :excitation_inhibition
+        # For excitation_inhibition mode, we need a baseline weighting mode
+        # Use exponential as the baseline (could also use free, but exponential is simpler)
+        ws_lo, ws_hi, ws_start = W_SLOPE_BOUNDS_ALLCONDITIONS
+        idx_w[:w_slope] = pushp!("w_slope", ws_lo, ws_hi, ws_start)
+        # Add excitation and inhibition gains
+        ge_lo, ge_hi, ge_start = GE_BOUNDS_ALLCONDITIONS
+        idx_w[:Ge] = pushp!("Ge", ge_lo, ge_hi, ge_start)
+        gi_lo, gi_hi, gi_start = GI_BOUNDS_ALLCONDITIONS
+        idx_w[:Gi] = pushp!("Gi", gi_lo, gi_hi, gi_start)
     else
-        error("Unknown weighting_mode: $weighting_mode. Use :exponential or :free")
+        error("Unknown weighting_mode: $weighting_mode. Use :exponential, :free, or :excitation_inhibition")
     end
+
+    # w0: weight for non-reward accumulators (reward = 0) - independent of weighting mode
+    w0_lo, w0_hi, w0_start = W0_BOUNDS_ALLCONDITIONS
+    idx_w0 = pushp!("w0", w0_lo, w0_hi, w0_start)
 
     # A (shared)
     idx_A = pushp!("A", A_BOUNDS_ALLCONDITIONS...)
@@ -297,6 +316,7 @@ function build_allconditions_params(weighting_mode::Symbol=DEFAULT_WEIGHTING_MOD
         idx_k,
         idx_t0,
         idx_w,
+        idx_w0,
         idx_A,
         idx_contam_alpha,
         idx_contam_rt,

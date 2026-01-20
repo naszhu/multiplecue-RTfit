@@ -5,6 +5,7 @@
 
 using DataFrames
 using Optim
+using ADTypes
 
 # Note: config.jl must be included before this file
 # Note: model_utils.jl must be included before this file (for PreprocessedData)
@@ -68,7 +69,7 @@ function fit_model(data::Union{DataFrame,PreprocessedData}, objective_func::Func
     # Testing showed 3x speedup with equivalent results
     # LBA/pdf are not Dual-number friendly, so use finite-difference gradients
     res = optimize(func, lower, upper, x0, Fminbox(LBFGS()), opt_options;
-                   autodiff=:finite)
+                   autodiff=ADTypes.AutoFiniteDiff())
 
     best = Optim.minimizer(res)
     println("\n--- Optimization Complete ---")
