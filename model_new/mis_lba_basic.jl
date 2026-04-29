@@ -8,10 +8,7 @@ epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
-# Basic fixed LBA settings. CI is fitted and scales the MIS relative weights into drift rates.
-lba_A = 0.3
-lba_k = 0.3
-lba_t0 = 0.05
+# LBA parameters are estimated with MLE.
 
 # Data source config (set ONE ID here, then extend the mapping below as needed):
 # - CCP001_S1 (lab-processed source)
@@ -76,8 +73,8 @@ data = filter(row -> Int(row.WarmUpTrial) == 0, data)
 
 # Keep only trials with an actual choice location; 0 means timeout.
 data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
-# Keep only trials where RT is usable for the LBA likelihood. RT is logged in ms.
-data = filter(row -> Float64(row.RT) / 1000 > lba_t0, data)
+# Keep only positive RT trials. RT is logged in ms.
+data = filter(row -> Float64(row.RT) > 0, data)
 # Require CueValues to be exactly 4 characters in every row.
 @assert all(ncodeunits(string(v)) == 4 for v in data.CueValues) "CueValues must be 4-character strings in all rows."
 
@@ -101,12 +98,19 @@ eps_val = 1e-12
 # theta  = reward-to-weight sensitivity
 # omega0 = baseline weight for zero-reward options
 # CI     = LBA processing capacity, scales relative weights into drift rates
+# A      = LBA start-point variability
+# k      = LBA threshold gap
+# t0     = LBA non-decision time
 obj = x -> begin
     theta = x[1]
     omega0 = x[2]
     CI = x[3]
+    A = x[4]
+    k = x[5]
+    t0 = x[6]
     nll = 0.0
     for i in eachindex(trial_rewards_arrarr)
+        rt_sec[i] <= t0 && return Inf
         r = trial_rewards_arrarr[i]
         w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in r]
         p = w ./ sum(w) # softmax-like probability
@@ -114,7 +118,7 @@ obj = x -> begin
             p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
         end
         drift_rates = CI .* p
-        lba = LBA(ν=drift_rates, A=lba_A, k=lba_k, τ=lba_t0)
+        lba = LBA(ν=drift_rates, A=A, k=k, τ=t0)
         lik = try
             pdf(lba, (choice=chosen_idx[i], rt=rt_sec[i]))
         catch
@@ -125,16 +129,22 @@ obj = x -> begin
     nll
 end
 
-# lower/upper: [theta, omega0, CI]
-lower = [0.0, 1e-6, 0.1]
+t0_upper = min(0.6, minimum(rt_sec) - 0.001)
+@assert t0_upper > 0.001 "All RTs are too small for estimating positive t0."
+
+# lower/upper: [theta, omega0, CI, A, k, t0]
+lower = [0.0, 1e-6, 0.1, 0.01, 0.05, 0.001]
 # Cap theta to reduce near-deterministic softmax collapse in noise-model fits.
-upper = [30.0, 50.0, 30.0]
-x0 = [1.0, 0.1, 5.0]
+upper = [30.0, 50.0, 30.0, 1.0, 1.0, t0_upper]
+x0 = [1.0, 0.1, 5.0, 0.3, 0.3, min(0.05, t0_upper / 2)]
 fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
 best = Optim.minimizer(fit)
 theta_hat = best[1]
 omega0_hat = best[2]
 CI_hat = best[3]
+A_hat = best[4]
+k_hat = best[5]
+t0_hat = best[6]
 nll = Optim.minimum(fit)
 
 chosen_prob = Float64[]
@@ -151,12 +161,12 @@ end
 println("Trials used: ", nrow(data))
 println("prob_model: ", prob_model)
 println("epsilon: ", epsilon)
-println("lba_A fixed: ", lba_A)
-println("lba_k fixed: ", lba_k)
-println("lba_t0 fixed: ", lba_t0)
 println("theta_hat: ", round(theta_hat, digits=6))
 println("omega0_hat: ", round(omega0_hat, digits=6))
 println("CI_hat: ", round(CI_hat, digits=6))
+println("A_hat: ", round(A_hat, digits=6))
+println("k_hat: ", round(k_hat, digits=6))
+println("t0_hat: ", round(t0_hat, digits=6))
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
 println("NLL: ", round(nll, digits=2))
 
@@ -210,7 +220,7 @@ ylabel!(pfig, "Probability chosen")
 title!(pfig, "MIS-LBA Prediction vs Data by CueCondition ($(data_label))")
 fig_dir = joinpath(@__DIR__, "figs")
 isdir(fig_dir) || mkdir(fig_dir)
-fig_suffix = prob_model == :noise_model ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+fig_suffix = prob_model == :original ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
 fig_path = joinpath(fig_dir, "mis_lba_basic_$(lowercase(data_label))_pred_vs_data$(fig_suffix).png")
 savefig(pfig, fig_path)
 println("Saved plot: ", fig_path)
@@ -221,7 +231,7 @@ for cc in ordered_conditions
     cond_rt = rt_sec[cond_idx]
     isempty(cond_rt) && continue
 
-    rt_min = max(lba_t0 + 0.001, minimum(cond_rt) - 0.05)
+    rt_min = max(t0_hat + 0.001, minimum(cond_rt) - 0.05)
     rt_max = maximum(cond_rt) + 0.05
     rt_grid = collect(range(rt_min, rt_max; length=150))
 
@@ -236,7 +246,7 @@ for cc in ordered_conditions
         if prob_model == :noise_model
             p_choice = (1 - epsilon) .* p_choice .+ epsilon .* (1 / 4)
         end
-        lba = LBA(ν=CI_hat .* p_choice, A=lba_A, k=lba_k, τ=lba_t0)
+        lba = LBA(ν=CI_hat .* p_choice, A=A_hat, k=k_hat, τ=t0_hat)
         for (j, rt) in enumerate(rt_grid)
             pred_density[j] += sum(pdf(lba, (choice=choice, rt=rt)) for choice in 1:4)
         end
