@@ -9,15 +9,15 @@ epsilon = 0.05
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
 # LBA cue-number config. :single = one cue, :multi = more than one cue.
-vary_CI_by_cue_number = true
+vary_CI_by_cue_number = false
 vary_k_by_cue_number = true
-vary_t0_by_cue_number = true
+vary_t0_by_cue_number = false
 
 # Data source config (set ONE ID here, then extend the mapping below as needed):
 # - CCP001_S1 (lab-processed source)
 # - CPP001_S1 / CPP001_S2 / CPP001_S3
 # - CPP002_S1 / CPP002_S2 / CPP002_S3
-data_source_id = "CCP001_S1"
+data_source_id = "CPP002_S1"
 # data_source_id = "CCP001_S1"
 data_source_paths = Dict(
     "CCP001_S1" => joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"),
@@ -98,7 +98,7 @@ cue_number_type = [count(!=(0), r) == 1 ? :single : :multi for r in trial_reward
 r_max = maximum(vcat(trial_rewards_arrarr...))
 eps_val = 1e-12
 
-t0_upper = min(0.6, minimum(rt_sec) - 0.001)
+t0_upper = minimum(rt_sec) - 0.001
 @assert t0_upper > 0.001 "All RTs are too small for estimating positive t0."
 
 param_names = String[]
@@ -118,23 +118,23 @@ idx_t0 = Dict{Symbol,Int}()
 
 for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
     push!(param_names, "CI_$(key)")
-    push!(lower, 0.1); push!(upper, 30.0); push!(x0, 5.0)
+    push!(lower, 0.01); push!(upper, 100.0); push!(x0, 5.0)
     idx_CI[key] = length(param_names)
 end
 
 push!(param_names, "A")
-push!(lower, 0.01); push!(upper, 1.0); push!(x0, 0.3)
+push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
 idx_A = length(param_names)
 
 for key in (vary_k_by_cue_number ? [:single, :multi] : [:all])
     push!(param_names, "k_$(key)")
-    push!(lower, 0.05); push!(upper, 1.0); push!(x0, 0.3)
+    push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
     idx_k[key] = length(param_names)
 end
 
 for key in (vary_t0_by_cue_number ? [:single, :multi] : [:all])
     push!(param_names, "t0_$(key)")
-    push!(lower, 0.001); push!(upper, t0_upper); push!(x0, min(0.05, t0_upper / 2))
+    push!(lower, 0.001); push!(upper, t0_upper); push!(x0, min(0.2, t0_upper / 2))
     idx_t0[key] = length(param_names)
 end
 
