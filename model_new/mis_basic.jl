@@ -107,8 +107,10 @@ obj = x -> begin
     nll
 end
 
+# lower/upper: [theta (reward-to-weight sensitivity), omega0 (baseline weight for zero-reward options)]
 lower = [0.0, 1e-6]
-upper = [50.0, 10.0]
+# Cap theta to reduce near-deterministic softmax collapse in noise-model fits.
+upper = [30.0, 50.0]
 x0 = [1.0, 0.1]
 fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
 best = Optim.minimizer(fit)
