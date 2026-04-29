@@ -3,7 +3,7 @@ using CSV, DataFrames, Statistics, Optim, Plots
 # Probability model config:
 # :original -> P(i) = exp(theta*r_i)/sum_j exp(theta*r_j)
 # :noise_model -> P(i) = (1-epsilon)*softmax_i + epsilon*(1/4)
-prob_model = :original
+prob_model = :noise_model
 epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
@@ -53,6 +53,15 @@ data = filter(row -> Int(row.Session) >= 6, data)
 data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
 # Require CueValues to be exactly 4 characters in every row.
 @assert all(ncodeunits(string(v)) == 4 for v in data.CueValues) "CueValues must be 4-character strings in all rows."
+
+# Convert CPP cue-condition numeric codes (1..10) to CCP-style labels ((1)..(4,3)).
+condition_code_to_label = Dict(
+    "1" => "(1)", "2" => "(2)", "3" => "(3)", "4" => "(4)",
+    "5" => "(2,1)", "6" => "(3,1)", "7" => "(4,1)", "8" => "(3,2)", "9" => "(4,2)", "10" => "(4,3)"
+)
+if startswith(data_source_id, "CPP")
+    data.CueCondition = [get(condition_code_to_label, string(cc), string(cc)) for cc in data.CueCondition]
+end
 
 # Precompute arrays for faster MLE optimization.
 trial_rewards_arrarr = [parse.(Int, collect(string(v))) for v in data.CueValues]
@@ -117,7 +126,7 @@ present_conditions = Set(string.(unique(data.CueCondition)))
 ordered_conditions = [cc for cc in condition_order if cc in present_conditions]
 
 for cc in ordered_conditions
-    cond_rows = filter(row -> row.CueCondition == cc, data)
+    cond_rows = filter(row -> string(row.CueCondition) == cc, data)
     cond_chosen_prob = Float64[]
     cond_pred_best = Float64[]
     cond_data_best = Float64[]
@@ -136,7 +145,7 @@ for cc in ordered_conditions
         push!(cond_data_best, chosen_location in best_idx ? 1.0 : 0.0)
     end
     println(cc, " -> n=", nrow(cond_rows), ", mean p(chosen)=", round(mean(cond_chosen_prob), digits=4))
-    push!(plot_cond, string(cc))
+    push!(plot_cond, cc)
     push!(plot_pred, mean(cond_pred_best))
     push!(plot_data, mean(cond_data_best))
 end
