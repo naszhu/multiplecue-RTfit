@@ -10,9 +10,13 @@ col_types = Dict(
 )
 data = reduce(vcat, [CSV.read(f, DataFrame;
     types=col_types,
-    select=[:CueValues, :PointTargetResponse, :CueCondition]
+    select=[:Session, :CueValues, :PointTargetResponse, :CueCondition]
 ) for f in files]; cols=:setequal)
 @assert eltype(data.PointTargetResponse) <: Number "PointTargetResponse must be read as a numeric column."
+@assert eltype(data.Session) <: Number "Session must be read as a numeric column."
+
+# Keep only session 6 and later.
+data = filter(row -> Int(row.Session) >= 6, data)
 
 
 
