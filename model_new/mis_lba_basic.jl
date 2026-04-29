@@ -8,7 +8,10 @@ epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
-# LBA parameters are estimated with MLE.
+# LBA cue-number config. :single = one cue, :multi = more than one cue.
+vary_CI_by_cue_number = true
+vary_k_by_cue_number = true
+vary_t0_by_cue_number = true
 
 # Data source config (set ONE ID here, then extend the mapping below as needed):
 # - CCP001_S1 (lab-processed source)
@@ -91,8 +94,49 @@ end
 trial_rewards_arrarr = [parse.(Int, collect(string(v))) for v in data.CueValues]
 chosen_idx = Int.(data.PointTargetResponse)
 rt_sec = Float64.(data.RT) ./ 1000
+cue_number_type = [count(!=(0), r) == 1 ? :single : :multi for r in trial_rewards_arrarr]
 r_max = maximum(vcat(trial_rewards_arrarr...))
 eps_val = 1e-12
+
+t0_upper = min(0.6, minimum(rt_sec) - 0.001)
+@assert t0_upper > 0.001 "All RTs are too small for estimating positive t0."
+
+param_names = String[]
+lower = Float64[]
+upper = Float64[]
+x0 = Float64[]
+
+push!(param_names, "theta")
+push!(lower, 0.0); push!(upper, 30.0); push!(x0, 1.0)
+
+push!(param_names, "omega0")
+push!(lower, 1e-6); push!(upper, 50.0); push!(x0, 0.1)
+
+idx_CI = Dict{Symbol,Int}()
+idx_k = Dict{Symbol,Int}()
+idx_t0 = Dict{Symbol,Int}()
+
+for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
+    push!(param_names, "CI_$(key)")
+    push!(lower, 0.1); push!(upper, 30.0); push!(x0, 5.0)
+    idx_CI[key] = length(param_names)
+end
+
+push!(param_names, "A")
+push!(lower, 0.01); push!(upper, 1.0); push!(x0, 0.3)
+idx_A = length(param_names)
+
+for key in (vary_k_by_cue_number ? [:single, :multi] : [:all])
+    push!(param_names, "k_$(key)")
+    push!(lower, 0.05); push!(upper, 1.0); push!(x0, 0.3)
+    idx_k[key] = length(param_names)
+end
+
+for key in (vary_t0_by_cue_number ? [:single, :multi] : [:all])
+    push!(param_names, "t0_$(key)")
+    push!(lower, 0.001); push!(upper, t0_upper); push!(x0, min(0.05, t0_upper / 2))
+    idx_t0[key] = length(param_names)
+end
 
 # MLE over parameters needed in this experiment:
 # theta  = reward-to-weight sensitivity
@@ -104,12 +148,13 @@ eps_val = 1e-12
 obj = x -> begin
     theta = x[1]
     omega0 = x[2]
-    CI = x[3]
-    A = x[4]
-    k = x[5]
-    t0 = x[6]
+    A = x[idx_A]
     nll = 0.0
     for i in eachindex(trial_rewards_arrarr)
+        cue_key = cue_number_type[i]
+        CI = x[idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
+        k = x[idx_k[vary_k_by_cue_number ? cue_key : :all]]
+        t0 = x[idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
         rt_sec[i] <= t0 && return Inf
         r = trial_rewards_arrarr[i]
         w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in r]
@@ -129,22 +174,11 @@ obj = x -> begin
     nll
 end
 
-t0_upper = min(0.6, minimum(rt_sec) - 0.001)
-@assert t0_upper > 0.001 "All RTs are too small for estimating positive t0."
-
-# lower/upper: [theta, omega0, CI, A, k, t0]
-lower = [0.0, 1e-6, 0.1, 0.01, 0.05, 0.001]
-# Cap theta to reduce near-deterministic softmax collapse in noise-model fits.
-upper = [30.0, 50.0, 30.0, 1.0, 1.0, t0_upper]
-x0 = [1.0, 0.1, 5.0, 0.3, 0.3, min(0.05, t0_upper / 2)]
 fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
 best = Optim.minimizer(fit)
 theta_hat = best[1]
 omega0_hat = best[2]
-CI_hat = best[3]
-A_hat = best[4]
-k_hat = best[5]
-t0_hat = best[6]
+A_hat = best[idx_A]
 nll = Optim.minimum(fit)
 
 chosen_prob = Float64[]
@@ -161,12 +195,21 @@ end
 println("Trials used: ", nrow(data))
 println("prob_model: ", prob_model)
 println("epsilon: ", epsilon)
+println("vary_CI_by_cue_number: ", vary_CI_by_cue_number)
+println("vary_k_by_cue_number: ", vary_k_by_cue_number)
+println("vary_t0_by_cue_number: ", vary_t0_by_cue_number)
 println("theta_hat: ", round(theta_hat, digits=6))
 println("omega0_hat: ", round(omega0_hat, digits=6))
-println("CI_hat: ", round(CI_hat, digits=6))
 println("A_hat: ", round(A_hat, digits=6))
-println("k_hat: ", round(k_hat, digits=6))
-println("t0_hat: ", round(t0_hat, digits=6))
+for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
+    println("CI_$(key)_hat: ", round(best[idx_CI[key]], digits=6))
+end
+for key in (vary_k_by_cue_number ? [:single, :multi] : [:all])
+    println("k_$(key)_hat: ", round(best[idx_k[key]], digits=6))
+end
+for key in (vary_t0_by_cue_number ? [:single, :multi] : [:all])
+    println("t0_$(key)_hat: ", round(best[idx_t0[key]], digits=6))
+end
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
 println("NLL: ", round(nll, digits=2))
 
@@ -220,7 +263,14 @@ ylabel!(pfig, "Probability chosen")
 title!(pfig, "MIS-LBA Prediction vs Data by CueCondition ($(data_label))")
 fig_dir = joinpath(@__DIR__, "figs")
 isdir(fig_dir) || mkdir(fig_dir)
-fig_suffix = prob_model == :original ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+model_suffix = prob_model == :noise_model ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+vary_suffix = join([
+    vary_CI_by_cue_number ? "varyCI" : "",
+    vary_k_by_cue_number ? "varyK" : "",
+    vary_t0_by_cue_number ? "varyT0" : ""
+] |> x -> filter(!isempty, x), "_")
+vary_suffix = isempty(vary_suffix) ? "" : "_$(vary_suffix)"
+fig_suffix = "$(model_suffix)$(vary_suffix)"
 fig_path = joinpath(fig_dir, "mis_lba_basic_$(lowercase(data_label))_pred_vs_data$(fig_suffix).png")
 savefig(pfig, fig_path)
 println("Saved plot: ", fig_path)
@@ -231,7 +281,8 @@ for cc in ordered_conditions
     cond_rt = rt_sec[cond_idx]
     isempty(cond_rt) && continue
 
-    rt_min = max(t0_hat + 0.001, minimum(cond_rt) - 0.05)
+    cond_t0 = [best[idx_t0[vary_t0_by_cue_number ? cue_number_type[i] : :all]] for i in cond_idx]
+    rt_min = max(maximum(cond_t0) + 0.001, minimum(cond_rt) - 0.05)
     rt_max = maximum(cond_rt) + 0.05
     rt_grid = collect(range(rt_min, rt_max; length=150))
 
@@ -246,7 +297,11 @@ for cc in ordered_conditions
         if prob_model == :noise_model
             p_choice = (1 - epsilon) .* p_choice .+ epsilon .* (1 / 4)
         end
-        lba = LBA(ν=CI_hat .* p_choice, A=A_hat, k=k_hat, τ=t0_hat)
+        cue_key = cue_number_type[trial_i]
+        CI = best[idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
+        k = best[idx_k[vary_k_by_cue_number ? cue_key : :all]]
+        t0 = best[idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
+        lba = LBA(ν=CI .* p_choice, A=A_hat, k=k, τ=t0)
         for (j, rt) in enumerate(rt_grid)
             pred_density[j] += sum(pdf(lba, (choice=choice, rt=rt)) for choice in 1:4)
         end
