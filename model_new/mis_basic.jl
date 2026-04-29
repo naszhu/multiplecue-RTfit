@@ -1,5 +1,13 @@
 using CSV, DataFrames, Statistics, Optim, Plots
 
+# Probability model config:
+# :original -> P(i) = exp(theta*r_i)/sum_j exp(theta*r_j)
+# :noise_model -> P(i) = (1-epsilon)*softmax_i + epsilon*(1/4)
+prob_model = :original
+epsilon = 0.05
+@assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
+@assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
+
 data_dir = joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed")
 files = filter(f -> endswith(f, ".csv"), readdir(data_dir; join=true))
 col_types = Dict(
@@ -41,7 +49,10 @@ obj = x -> begin
     for i in eachindex(trial_rewards_arrarr)
         r = trial_rewards_arrarr[i]
         w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in r]
-        p = w ./ sum(w)
+        p = w ./ sum(w) # softmax-like probability
+        if prob_model == :noise_model
+            p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
+        end
         nll -= log(p[chosen_idx[i]] + eps_val)
     end
     nll
@@ -61,10 +72,15 @@ for i in eachindex(trial_rewards_arrarr)
     r = trial_rewards_arrarr[i]
     w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
     p = w ./ sum(w)
+    if prob_model == :noise_model
+        p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
+    end
     push!(chosen_prob, p[chosen_idx[i]])
 end
 
 println("Trials used: ", nrow(data))
+println("prob_model: ", prob_model)
+println("epsilon: ", epsilon)
 println("theta_hat: ", round(theta_hat, digits=6))
 println("omega0_hat: ", round(omega0_hat, digits=6))
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
@@ -88,6 +104,9 @@ for cc in ordered_conditions
         r = parse.(Int, collect(string(trial_row.CueValues)))
         w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
         p = w ./ sum(w)
+        if prob_model == :noise_model
+            p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
+        end
         chosen_location = Int(trial_row.PointTargetResponse)
         push!(cond_chosen_prob, p[chosen_location])
         best_reward = maximum(r)
@@ -117,6 +136,7 @@ ylabel!(pfig, "Probability chosen")
 title!(pfig, "Prediction vs Data by CueCondition")
 fig_dir = joinpath(@__DIR__, "figs")
 isdir(fig_dir) || mkdir(fig_dir)
-fig_path = joinpath(fig_dir, "mis_basic_pred_vs_data.png")
+fig_suffix = prob_model == :noise_model ? "noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+fig_path = joinpath(fig_dir, "mis_basic_pred_vs_data$(fig_suffix).png")
 savefig(pfig, fig_path)
 println("Saved plot: ", fig_path)
