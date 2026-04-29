@@ -8,8 +8,29 @@ epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
-data_dir = joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed")
+# Data source config (set ONE ID here, then extend the mapping below as needed):
+# - CCP001_S1 (lab-processed source)
+# - CPP001_S1 / CPP001_S2 / CPP001_S3
+# - CPP002_S1 / CPP002_S2 / CPP002_S3
+data_source_id = "CPP001_S1"
+# data_source_id = "CCP001_S1"
+data_source_paths = Dict(
+    "CCP001_S1" => joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"),
+    "CPP001_S1" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 1", "extracted data"),
+    "CPP001_S2" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 2", "extracted data"),
+    "CPP001_S3" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 3", "extracted data"),
+    "CPP002_S1" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-001", "extracted data"),
+    "CPP002_S2" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-002", "extracted data"),
+    "CPP002_S3" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-003", "extracted data")
+)
+@assert haskey(data_source_paths, data_source_id) "Unknown data_source_id: $(data_source_id). Add it to data_source_paths."
+data_label = data_source_id
+data_dir = data_source_paths[data_source_id]
 files = filter(f -> endswith(f, ".csv"), readdir(data_dir; join=true))
+@assert !isempty(files) "No CSV files found in data_dir: $(data_dir)"
+println("data_source_id: ", data_source_id)
+println("data_label: ", data_label)
+println("data_dir: ", data_dir)
 col_types = Dict(
     :Cues => String,
     :CueValues => String,
@@ -124,7 +145,7 @@ x = collect(1:length(plot_cond))
 pfig = plot(
     x, plot_pred;
     label="Prediction", marker=:circle, lw=2, color=:blue,
-    ylim=(0.8, 1.1)
+    ylim=(0.5, 1.1)
 )
 plot!(
     pfig, x, plot_data;
@@ -133,10 +154,10 @@ plot!(
 xticks!(pfig, (x, plot_cond))
 xlabel!(pfig, "Condition")
 ylabel!(pfig, "Probability chosen")
-title!(pfig, "Prediction vs Data by CueCondition")
+title!(pfig, "Prediction vs Data by CueCondition ($(data_label))")
 fig_dir = joinpath(@__DIR__, "figs")
 isdir(fig_dir) || mkdir(fig_dir)
-fig_suffix = prob_model == :noise_model ? "noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
-fig_path = joinpath(fig_dir, "mis_basic_pred_vs_data$(fig_suffix).png")
+fig_suffix = prob_model == :noise_model ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+fig_path = joinpath(fig_dir, "mis_basic_$(lowercase(data_label))_pred_vs_data$(fig_suffix).png")
 savefig(pfig, fig_path)
 println("Saved plot: ", fig_path)
