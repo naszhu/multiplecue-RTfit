@@ -45,7 +45,7 @@ println("   Running likelihood (10x)...")
     for i in 1:10
         mis_lba_allconditions_loglike_fast(test_params, preprocessed; r_max=r_max)
     end
-end
+end 
 
 # Verify they give same result
 ll_original = mis_lba_allconditions_loglike(test_params, data; r_max=r_max)
