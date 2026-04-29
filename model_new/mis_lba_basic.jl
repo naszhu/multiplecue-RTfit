@@ -3,7 +3,7 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Kerne
 # Probability model config:
 # :original -> P(i) = exp(theta*r_i)/sum_j exp(theta*r_j)
 # :noise_model -> P(i) = (1-epsilon)*softmax_i + epsilon*(1/4)
-prob_model = :noise_model
+prob_model = :original
 epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
@@ -93,7 +93,7 @@ end
 # Precompute arrays for faster MLE optimization.
 trial_rewards_arrarr = [parse.(Int, collect(string(v))) for v in data.CueValues]
 chosen_idx = Int.(data.PointTargetResponse)
-rt_sec = Float64.(data.RT) ./ 1000
+rt_sec = startswith(data_source_id, "CPP") ? Float64.(data.RT) : Float64.(data.RT) ./ 1000
 cue_number_type = [count(!=(0), r) == 1 ? :single : :multi for r in trial_rewards_arrarr]
 r_max = maximum(vcat(trial_rewards_arrarr...))
 eps_val = 1e-12
