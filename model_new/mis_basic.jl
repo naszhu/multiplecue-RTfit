@@ -1,4 +1,4 @@
-using CSV, DataFrames, Statistics
+using CSV, DataFrames, Statistics, Optim
 
 data_dir = joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed")
 files = filter(f -> endswith(f, ".csv"), readdir(data_dir; join=true))
@@ -25,22 +25,48 @@ data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
 # Require CueValues to be exactly 4 characters in every row.
 @assert all(ncodeunits(string(v)) == 4 for v in data.CueValues) "CueValues must be 4-character strings in all rows."
 
-theta = 1.0
+# Precompute arrays for faster MLE optimization.
+trial_rewards_arrarr = [parse.(Int, collect(string(v))) for v in data.CueValues]
+chosen_idx = Int.(data.PointTargetResponse)
+r_max = maximum(vcat(trial_rewards_arrarr...))
 eps_val = 1e-12
-chosen_prob = Float64[]
 
-for trial_row in eachrow(data)
-    cue_values_str = string(trial_row.CueValues)                   # 4 spatial slots
-    trial_reward_array = parse.(Int, collect(cue_values_str))     # reward per slot
-    trial_weight_array = exp.(theta .* trial_reward_array)         # MIS weighting
-    trial_prob_array = trial_weight_array ./ sum(trial_weight_array) # normalized p(choice)
-    chosen_location_idx = Int(trial_row.PointTargetResponse)
-    push!(chosen_prob, trial_prob_array[chosen_location_idx])
+# MLE over parameters needed in this experiment:
+# theta  = reward-to-weight sensitivity
+# omega0 = baseline weight for zero-reward options
+obj = x -> begin
+    theta = x[1]
+    omega0 = x[2]
+    nll = 0.0
+    for i in eachindex(trial_rewards_arrarr)
+        r = trial_rewards_arrarr[i]
+        w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in r]
+        p = w ./ sum(w)
+        nll -= log(p[chosen_idx[i]] + eps_val)
+    end
+    nll
 end
 
-nll = -sum(log.(chosen_prob .+ eps_val))
+lower = [0.0, 1e-6]
+upper = [50.0, 10.0]
+x0 = [1.0, 0.1]
+fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
+best = Optim.minimizer(fit)
+theta_hat = best[1]
+omega0_hat = best[2]
+nll = Optim.minimum(fit)
+
+chosen_prob = Float64[]
+for i in eachindex(trial_rewards_arrarr)
+    r = trial_rewards_arrarr[i]
+    w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
+    p = w ./ sum(w)
+    push!(chosen_prob, p[chosen_idx[i]])
+end
 
 println("Trials used: ", nrow(data))
+println("theta_hat: ", round(theta_hat, digits=6))
+println("omega0_hat: ", round(omega0_hat, digits=6))
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
 println("NLL: ", round(nll, digits=2))
 
@@ -48,12 +74,10 @@ for cc in sort(unique(data.CueCondition))
     cond_rows = filter(row -> row.CueCondition == cc, data)
     cond_chosen_prob = Float64[]
     for trial_row in eachrow(cond_rows)
-        cue_values_str = string(trial_row.CueValues)
-        trial_reward_array = parse.(Int, collect(cue_values_str))
-        trial_prob_array = exp.(theta .* trial_reward_array)
-        trial_prob_array ./= sum(trial_prob_array)
-        chosen_location_idx = Int(trial_row.PointTargetResponse)
-        push!(cond_chosen_prob, trial_prob_array[chosen_location_idx])
+        r = parse.(Int, collect(string(trial_row.CueValues)))
+        w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
+        p = w ./ sum(w)
+        push!(cond_chosen_prob, p[Int(trial_row.PointTargetResponse)])
     end
     println(cc, " -> n=", nrow(cond_rows), ", mean p(chosen)=", round(mean(cond_chosen_prob), digits=4))
 end
