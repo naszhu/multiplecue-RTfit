@@ -12,7 +12,7 @@ epsilon = 0.05
 # - CCP001_S1 (lab-processed source)
 # - CPP001_S1 / CPP001_S2 / CPP001_S3
 # - CPP002_S1 / CPP002_S2 / CPP002_S3
-data_source_id = "CPP002_S1"
+data_source_id = "CPP001_S1"
 # data_source_id = "CCP001_S1"
 data_source_paths = Dict(
     "CCP001_S1" => joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"),
@@ -37,17 +37,36 @@ col_types = Dict(
     :CueRanks => String,
     :RespLoc => String
 )
-data = reduce(vcat, [CSV.read(f, DataFrame;
-    types=col_types,
-    select=[:Session, :CueValues, :PointTargetResponse, :CueCondition]
-) for f in files]; cols=:setequal)
+frames = DataFrame[]
+for f in files
+    hdr = names(CSV.read(f, DataFrame; limit=0))
+    has_warmup = "WarmUpTrial" in string.(hdr)
+    if has_warmup
+        push!(frames, CSV.read(f, DataFrame;
+            types=col_types,
+            select=[:Session, :WarmUpTrial, :CueValues, :PointTargetResponse, :CueCondition]
+        ))
+    else
+        println("WARNING: Missing WarmUpTrial in file: ", f, " -> assigning WarmUpTrial=1 for all rows (will be excluded by WarmUpTrial==0 filter).")
+        df = CSV.read(f, DataFrame;
+            types=col_types,
+            select=[:Session, :CueValues, :PointTargetResponse, :CueCondition]
+        )
+        df.WarmUpTrial = ones(Int, nrow(df))
+        select!(df, [:Session, :WarmUpTrial, :CueValues, :PointTargetResponse, :CueCondition])
+        push!(frames, df)
+    end
+end
+data = reduce(vcat, frames; cols=:setequal)
 @assert eltype(data.PointTargetResponse) <: Number "PointTargetResponse must be read as a numeric column."
 @assert eltype(data.Session) <: Number "Session must be read as a numeric column."
+@assert eltype(data.WarmUpTrial) <: Number "WarmUpTrial must be read as a numeric column."
 
 # Keep only session 6 and later.
 data = filter(row -> Int(row.Session) >= 6, data)
 
-
+# Keep only main trials (WarmUpTrial == 0).
+data = filter(row -> Int(row.WarmUpTrial) == 0, data)
 
 # Keep only trials with an actual choice location; 0 means timeout.
 data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
