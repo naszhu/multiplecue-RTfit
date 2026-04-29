@@ -1,4 +1,4 @@
-using CSV, DataFrames, Statistics, Optim
+using CSV, DataFrames, Statistics, Optim, Plots
 
 data_dir = joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed")
 files = filter(f -> endswith(f, ".csv"), readdir(data_dir; join=true))
@@ -70,14 +70,53 @@ println("omega0_hat: ", round(omega0_hat, digits=6))
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
 println("NLL: ", round(nll, digits=2))
 
-for cc in sort(unique(data.CueCondition))
+plot_cond = String[]
+plot_pred = Float64[]
+plot_data = Float64[]
+
+# Canonical condition order from metadata.
+condition_order = ["(1)", "(2)", "(3)", "(4)", "(2,1)", "(3,1)", "(4,1)", "(3,2)", "(4,2)", "(4,3)"]
+present_conditions = Set(string.(unique(data.CueCondition)))
+ordered_conditions = [cc for cc in condition_order if cc in present_conditions]
+
+for cc in ordered_conditions
     cond_rows = filter(row -> row.CueCondition == cc, data)
     cond_chosen_prob = Float64[]
+    cond_pred_best = Float64[]
+    cond_data_best = Float64[]
     for trial_row in eachrow(cond_rows)
         r = parse.(Int, collect(string(trial_row.CueValues)))
         w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
         p = w ./ sum(w)
-        push!(cond_chosen_prob, p[Int(trial_row.PointTargetResponse)])
+        chosen_location = Int(trial_row.PointTargetResponse)
+        push!(cond_chosen_prob, p[chosen_location])
+        best_reward = maximum(r)
+        best_idx = findall(==(best_reward), r)
+        push!(cond_pred_best, sum(p[best_idx]))
+        push!(cond_data_best, chosen_location in best_idx ? 1.0 : 0.0)
     end
     println(cc, " -> n=", nrow(cond_rows), ", mean p(chosen)=", round(mean(cond_chosen_prob), digits=4))
+    push!(plot_cond, string(cc))
+    push!(plot_pred, mean(cond_pred_best))
+    push!(plot_data, mean(cond_data_best))
 end
+
+x = collect(1:length(plot_cond))
+pfig = plot(
+    x, plot_pred;
+    label="Prediction", marker=:circle, lw=2, color=:blue,
+    ylim=(0.8, 1.1)
+)
+plot!(
+    pfig, x, plot_data;
+    label="Data", marker=:diamond, lw=2, color=:red
+)
+xticks!(pfig, (x, plot_cond))
+xlabel!(pfig, "Condition")
+ylabel!(pfig, "Probability chosen")
+title!(pfig, "Prediction vs Data by CueCondition")
+fig_dir = joinpath(@__DIR__, "figs")
+isdir(fig_dir) || mkdir(fig_dir)
+fig_path = joinpath(fig_dir, "mis_basic_pred_vs_data.png")
+savefig(pfig, fig_path)
+println("Saved plot: ", fig_path)
