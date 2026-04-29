@@ -6,6 +6,11 @@ import csv
 SOURCE_SUBFOLDER = "data/ParticipantCPP002-001"
 
 MIN_TAB_COLUMNS = 10
+STRING_COLUMNS = {"Cues", "CueValues", "RespLoc"}
+# If True, drop eye movement columns from "EyeT1" to the final column.
+EXCLUDE_EYE_MOVEMENT_COLUMNS = True
+# If True, overwrite existing CSV files instead of skipping them.
+OVERWRITE_EXISTING_CSV = True
 
 
 def find_table_start(lines: list[str], min_cols: int = MIN_TAB_COLUMNS) -> tuple[int, int]:
@@ -39,6 +44,27 @@ def convert_one(dat_path: Path, out_csv: Path) -> None:
         if len(parts) == n_cols:
             rows.append(parts)
 
+    if not rows:
+        raise ValueError("No tabular rows found in .dat file.")
+
+    header = rows[0]
+
+    if EXCLUDE_EYE_MOVEMENT_COLUMNS and "EyeT1" in header:
+        eye_start_idx = header.index("EyeT1")
+        rows = [row[:eye_start_idx] for row in rows]
+        header = rows[0]
+
+    string_col_indices = [idx for idx, col in enumerate(header) if col in STRING_COLUMNS]
+
+    # Prefix with apostrophe so downstream tools keep these as text (not numbers).
+    for row in rows[1:]:
+        for idx in string_col_indices:
+            if idx >= len(row):
+                continue
+            value = row[idx].strip()
+            if value and not value.startswith("'"):
+                row[idx] = f"'{value}"
+
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(rows)
@@ -56,22 +82,30 @@ def main() -> None:
         return
 
     converted = 0
+    overwritten = 0
     skipped_existing = 0
     skipped_error = 0
 
     for dat_path in dat_files:
         out_csv = out_dir / f"{dat_path.stem}.csv"
-        if out_csv.exists():
+        existed_before = out_csv.exists()
+        if out_csv.exists() and not OVERWRITE_EXISTING_CSV:
             skipped_existing += 1
             continue
         try:
             convert_one(dat_path, out_csv)
-            converted += 1
+            if existed_before and OVERWRITE_EXISTING_CSV:
+                overwritten += 1
+            else:
+                converted += 1
         except Exception as e:
             skipped_error += 1
             print(f"Skip (error): {dat_path.name} -> {e}")
 
-    print(f"Done. Converted: {converted}, skipped existing: {skipped_existing}, skipped errors: {skipped_error}")
+    print(
+        f"Done. Converted new: {converted}, overwritten: {overwritten}, "
+        f"skipped existing: {skipped_existing}, skipped errors: {skipped_error}"
+    )
     print(f"Output folder: {out_dir}")
 
 
