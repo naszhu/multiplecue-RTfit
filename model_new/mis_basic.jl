@@ -8,7 +8,13 @@ col_types = Dict(
     :CueRanks => String,
     :RespLoc => String
 )
-data = reduce(vcat, [CSV.read(f, DataFrame; types=col_types) for f in files]; cols=:union)
+data = reduce(vcat, [CSV.read(f, DataFrame;
+    types=col_types,
+    select=[:CueValues, :PointTargetResponse, :CueCondition]
+) for f in files]; cols=:setequal)
+@assert eltype(data.PointTargetResponse) <: Number "PointTargetResponse must be read as a numeric column."
+
+
 
 # Keep only trials with an actual choice location; 0 means timeout.
 data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
