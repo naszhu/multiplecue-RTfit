@@ -3,10 +3,10 @@ import csv
 
 
 # Set this to the folder (under exp/) that contains your .dat files.
-SOURCE_SUBFOLDER = "data/ParticipantCPP002-001"
+SOURCE_SUBFOLDER = "data/ParticipantCPP002-003"
+# SOURCE_SUBFOLDER = "data/CPP001 - subj 3"
 
 MIN_TAB_COLUMNS = 10
-STRING_COLUMNS = {"Cues", "CueValues", "RespLoc"}
 # If True, drop eye movement columns from "EyeT1" to the final column.
 EXCLUDE_EYE_MOVEMENT_COLUMNS = True
 # If True, overwrite existing CSV files instead of skipping them.
@@ -53,17 +53,6 @@ def convert_one(dat_path: Path, out_csv: Path) -> None:
         eye_start_idx = header.index("EyeT1")
         rows = [row[:eye_start_idx] for row in rows]
         header = rows[0]
-
-    string_col_indices = [idx for idx, col in enumerate(header) if col in STRING_COLUMNS]
-
-    # Prefix with apostrophe so downstream tools keep these as text (not numbers).
-    for row in rows[1:]:
-        for idx in string_col_indices:
-            if idx >= len(row):
-                continue
-            value = row[idx].strip()
-            if value and not value.startswith("'"):
-                row[idx] = f"'{value}"
 
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
