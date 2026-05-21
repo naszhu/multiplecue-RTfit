@@ -12,7 +12,10 @@ epsilon = 0.05
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
 # Fixed numerical controls.
-max_prw_steps = 120
+# The paper fits 10/30/50/70/90% quantile bins with quantile maximum likelihood.
+quantile_probs = [0.1, 0.3, 0.5, 0.7, 0.9]
+min_trials_per_choice_quantile = 5
+max_prw_steps = 160
 use_contaminant_floor = false
 contaminant_alpha = 0.05
 contaminant_rt_max = 3.0
@@ -21,7 +24,7 @@ contaminant_rt_max = 3.0
 # - CCP001_S1 (lab-processed source)
 # - CPP001_S1 / CPP001_S2 / CPP001_S3
 # - CPP002_S1 / CPP002_S2 / CPP002_S3
-data_source_id = "CPP002_S1"
+data_source_id = "CPP001_S1"
 # data_source_id = "CCP001_S1"
 data_source_paths = Dict(
     "CCP001_S1" => joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"),
@@ -106,6 +109,9 @@ for n in 2:max_prw_steps
     logfactorials[n] = logfactorials[n - 1] + log(n - 1)
 end
 
+"""
+Compute the step probabilities of the reward options.
+"""
 function reward_probabilities(rewards, theta, omega0, r_max, prob_model, epsilon)
     w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in rewards]
     p = w ./ sum(w)
@@ -146,6 +152,10 @@ function build_transition_matrix(step_probs::Vector{Float64}, k::Int)
     return T
 end
 
+"""
+Compute the floor and ceil absorption probabilities for the mixed-k PRW model.
+    i.e. first passage distribution over number of steps to absorb.
+"""
 function compute_absorption_probs(step_probs::Vector{Float64}, k::Int, max_steps::Int)
     n_opts = length(step_probs)
     n_states = 1 + n_opts * (k - 1)
@@ -169,6 +179,11 @@ function compute_absorption_probs(step_probs::Vector{Float64}, k::Int, max_steps
     return abs_probs
 end
 
+"""
+Compute the PRW PDF for a single RT/choice by convolving step counts with an Erlang.
+    i.e. the probability of observing an RT/choice given the step probabilities.
+    i.e.,  compute time distribution conditional on number of steps to absorb. + marginalize over choices.
+"""
 function prw_pdf_point(rt::Float64, t0::Float64, C::Float64, abs_probs::Matrix{Float64}, choice::Int, logfactorials::Vector{Float64})
     decision_time = rt - t0
     if decision_time <= 0
@@ -187,6 +202,40 @@ function prw_pdf_point(rt::Float64, t0::Float64, C::Float64, abs_probs::Matrix{F
     return density
 end
 
+function erlang_cdf(decision_time::Float64, C::Float64, n::Int, logfactorials::Vector{Float64})
+    if decision_time <= 0
+        return 0.0
+    end
+
+    Ct = C * decision_time
+    poisson_sum = 0.0
+    for m in 0:(n - 1)
+        poisson_sum += exp(m * log(Ct) - logfactorials[m + 1])
+    end
+    return 1.0 - exp(-Ct) * poisson_sum
+end
+
+function prw_cdf_point(rt::Float64, t0::Float64, C::Float64, abs_probs::Matrix{Float64}, choice::Int, logfactorials::Vector{Float64})
+    decision_time = rt - t0
+    if decision_time <= 0
+        return 0.0
+    end
+
+    cdf = 0.0
+    for n in 1:size(abs_probs, 1)
+        p_absorb = abs_probs[n, choice]
+        if p_absorb > 0
+            cdf += p_absorb * erlang_cdf(decision_time, C, n, logfactorials)
+        end
+    end
+    return cdf
+end
+
+
+"""
+Compute the floor and ceil absorption probabilities for the mixed-k PRW model.
+
+"""
 function mixed_absorption(step_probs::Vector{Float64}, k::Float64, max_steps::Int)
     k_floor = max(1, floor(Int, k))
     k_ceil = max(1, ceil(Int, k))
@@ -204,6 +253,54 @@ function prw_choice_probabilities(step_probs::Vector{Float64}, k::Float64, max_s
     return total_abs > 0 ? p_choice ./ total_abs : fill(1 / length(step_probs), length(step_probs))
 end
 
+function uniform_contaminant_bin_prob(lower_edge::Float64, upper_edge::Float64, rt_max::Float64, n_choices::Int)
+    lo = max(lower_edge, 0.0)
+    hi = min(upper_edge, rt_max)
+    return max(hi - lo, 0.0) / (n_choices * rt_max)
+end
+
+function prw_quantile_bin_probabilities(
+    cuts::Vector{Float64},
+    t0::Float64,
+    C::Float64,
+    abs_floor::Matrix{Float64},
+    abs_ceil::Matrix{Float64},
+    p_floor::Float64,
+    p_ceil::Float64,
+    choice::Int,
+    logfactorials::Vector{Float64};
+    use_contaminant::Bool=false,
+    contaminant_alpha::Float64=0.0,
+    contaminant_rt_max::Float64=3.0
+)
+    bin_probs = Float64[]
+    prev_cdf = 0.0
+    lower_edge = 0.0
+
+    for cut in cuts
+        cdf = p_floor * prw_cdf_point(cut, t0, C, abs_floor, choice, logfactorials) +
+              p_ceil * prw_cdf_point(cut, t0, C, abs_ceil, choice, logfactorials)
+        model_prob = max(cdf - prev_cdf, 0.0)
+        if use_contaminant
+            contam_prob = uniform_contaminant_bin_prob(lower_edge, cut, contaminant_rt_max, size(abs_floor, 2))
+            model_prob = (1 - contaminant_alpha) * model_prob + contaminant_alpha * contam_prob
+        end
+        push!(bin_probs, model_prob)
+        prev_cdf = cdf
+        lower_edge = cut
+    end
+
+    p_choice = p_floor * sum(abs_floor[:, choice]) + p_ceil * sum(abs_ceil[:, choice])
+    model_prob = max(p_choice - prev_cdf, 0.0)
+    if use_contaminant
+        contam_prob = uniform_contaminant_bin_prob(lower_edge, contaminant_rt_max, contaminant_rt_max, size(abs_floor, 2))
+        model_prob = (1 - contaminant_alpha) * model_prob + contaminant_alpha * contam_prob
+    end
+    push!(bin_probs, model_prob)
+
+    return bin_probs
+end
+
 group_map = Dict{Any,Int}()
 group_rewards = Vector{Vector{Int}}()
 group_trial_indices = Vector{Vector{Int}}()
@@ -217,6 +314,28 @@ for i in eachindex(trial_rewards_arrarr)
     end
     push!(group_trial_indices[group_map[key]], i)
 end
+
+QuantileBin = NamedTuple{(:choice, :cuts, :counts), Tuple{Int, Vector{Float64}, Vector{Int}}}
+group_quantile_bins = [QuantileBin[] for _ in group_rewards]
+for g in eachindex(group_trial_indices)
+    for choice in 1:4
+        choice_trial_idx = [i for i in group_trial_indices[g] if chosen_idx[i] == choice]
+        length(choice_trial_idx) < min_trials_per_choice_quantile && continue
+
+        choice_rt = rt_sec[choice_trial_idx]
+        cuts = Float64.(quantile(choice_rt, quantile_probs))
+        counts = Int[]
+        lower_edge = -Inf
+        for cut in cuts
+            push!(counts, count(rt -> lower_edge < rt <= cut, choice_rt))
+            lower_edge = cut
+        end
+        push!(counts, count(rt -> rt > cuts[end], choice_rt))
+        push!(group_quantile_bins[g], (choice=choice, cuts=cuts, counts=counts))
+    end
+end
+quantile_cell_count = sum(length(bins) for bins in group_quantile_bins)
+@assert quantile_cell_count > 0 "No response-category quantile bins were available for fitting."
 
 t0_upper = minimum(rt_sec) - 0.001
 @assert t0_upper > 0.001 "All RTs are too small for estimating positive t0."
@@ -240,7 +359,7 @@ idx_C = push_param!("C", 1.0, 120.0, 20.0)
 idx_k = push_param!("k", 1.0, 12.0, 4.0)
 idx_t0 = push_param!("t0", 0.001, t0_upper, min(0.25, t0_upper / 2))
 
-# MLE over parameters needed in this experiment:
+# Quantile maximum likelihood over parameters needed in this experiment:
 # theta  = reward-to-weight sensitivity
 # omega0 = baseline weight for zero-reward options
 # C      = Poisson evidence-sampling rate
@@ -256,24 +375,31 @@ obj = x -> begin
     k < 1 && return Inf
     t0 <= 0 && return Inf
 
-    nll = 0.0
+    qml_nll = 0.0
 
     for g in eachindex(group_rewards)
+        isempty(group_quantile_bins[g]) && continue
+
         p_step = reward_probabilities(group_rewards[g], theta, omega0, r_max, prob_model, epsilon)
         abs_floor, abs_ceil, p_floor, p_ceil = mixed_absorption(p_step, k, max_prw_steps)
 
-        for trial_i in group_trial_indices[g]
-            rt_sec[trial_i] <= t0 && return Inf
-            choice = chosen_idx[trial_i]
-            lik = p_floor * prw_pdf_point(rt_sec[trial_i], t0, C, abs_floor, choice, logfactorials) +
-                  p_ceil * prw_pdf_point(rt_sec[trial_i], t0, C, abs_ceil, choice, logfactorials)
-            if use_contaminant_floor
-                lik = (1 - contaminant_alpha) * lik + contaminant_alpha * (1 / (4 * contaminant_rt_max))
+        for qbin in group_quantile_bins[g]
+            if qbin.cuts[1] <= t0
+                return Inf
             end
-            nll -= log(max(lik, eps_val))
+            bin_probs = prw_quantile_bin_probabilities(
+                qbin.cuts, t0, C, abs_floor, abs_ceil, p_floor, p_ceil, qbin.choice, logfactorials;
+                use_contaminant=use_contaminant_floor,
+                contaminant_alpha=contaminant_alpha,
+                contaminant_rt_max=contaminant_rt_max
+            )
+            for (observed_count, predicted_prob) in zip(qbin.counts, bin_probs)
+                observed_count == 0 && continue
+                qml_nll -= observed_count * log(max(predicted_prob, eps_val))
+            end
         end
     end
-    nll
+    qml_nll
 end
 
 fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
@@ -294,6 +420,9 @@ end
 println("Trials used: ", nrow(data))
 println("prob_model: ", prob_model)
 println("epsilon: ", epsilon)
+println("fit_method: quantile maximum likelihood")
+println("quantile_probs: ", quantile_probs)
+println("quantile_cell_count: ", quantile_cell_count)
 println("max_prw_steps: ", max_prw_steps)
 println("use_contaminant_floor: ", use_contaminant_floor)
 println("theta_hat: ", round(theta_hat, digits=6))
@@ -302,7 +431,7 @@ println("C_hat: ", round(best[idx_C], digits=6))
 println("k_hat: ", round(best[idx_k], digits=6))
 println("t0_hat: ", round(best[idx_t0], digits=6))
 println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
-println("NLL: ", round(nll, digits=2))
+println("QML NLL: ", round(nll, digits=2))
 
 plot_cond = String[]
 plot_pred = Float64[]
@@ -352,9 +481,10 @@ ylabel!(pfig, "Probability chosen")
 title!(pfig, "MIS-PRW Prediction vs Data by CueCondition ($(data_label))")
 fig_dir = joinpath(@__DIR__, "figs")
 isdir(fig_dir) || mkdir(fig_dir)
+fit_method_suffix = "_qml"
 model_suffix = prob_model == :noise_model ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
 contam_suffix = use_contaminant_floor ? "_contam$(replace(string(round(contaminant_alpha, digits=3)), "." => "p"))" : ""
-fig_suffix = "$(model_suffix)$(contam_suffix)"
+fig_suffix = "$(model_suffix)$(fit_method_suffix)$(contam_suffix)"
 fig_path = joinpath(fig_dir, "mis_poissonRW_basic_$(lowercase(data_label))_pred_vs_data$(fig_suffix).png")
 savefig(pfig, fig_path)
 println("Saved plot: ", fig_path)
