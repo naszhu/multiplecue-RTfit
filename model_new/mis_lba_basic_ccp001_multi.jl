@@ -2,6 +2,7 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels
 
 # Multi-subject minimal MIS+LBA for CCP001 (completed subjects with ses17).
 # Single-subject / other datasets: use mis_lba_basic.jl
+# Compare subsets: julia plot_ccp001_mis_lba_params_compare.jl
 
 # Probability model config:
 # :original -> P(i) = exp(theta*r_i)/sum_j exp(theta*r_j)
@@ -22,6 +23,10 @@ const CCP001_PROCESSED_FALLBACK = joinpath(
 )
 const REQUIRED_SESSION = 17
 const MIN_SESSION = 6
+const EXPERIMENT_SESSION_FIRST = 6
+const EXPERIMENT_SESSION_LAST = 17
+const EXPERIMENT_SESSION_COUNT = EXPERIMENT_SESSION_LAST - EXPERIMENT_SESSION_FIRST + 1
+const FIRST_HALF_SESSION_LAST = EXPERIMENT_SESSION_FIRST + div(EXPERIMENT_SESSION_COUNT, 2) - 1
 const MIN_RT_MS = 100.0
 const LINE_LW = 2.5
 const MARKER_SIZE = 5
@@ -30,9 +35,36 @@ const SINGLE_CUE_CONDITIONS = Set(["(1)", "(2)", "(3)", "(4)"])
 const DUAL_CUE_CONDITIONS = Set(["(2,1)", "(3,1)", "(4,1)", "(3,2)", "(4,2)", "(4,3)"])
 const ALLOWED_CONDITIONS = union(SINGLE_CUE_CONDITIONS, DUAL_CUE_CONDITIONS)
 
-# :full = all cue conditions; :dual_cue = dual-cue trials only (exclude single-cue).
-const DATA_CHUNK = :dual_cue
-@assert DATA_CHUNK in (:full, :dual_cue)
+# Pick ONE subset per run (writes its own CSV under figs/figs_jun16/):
+#   :all_sessions        -> sessions 6–17, single + dual cue
+#   :dual_cue_only       -> sessions 6–17, dual-cue trials only
+#   :first_half_sessions -> sessions 6–11, single + dual cue
+const DATA_SUBSET = :first_half_sessions
+@assert DATA_SUBSET in (:all_sessions, :dual_cue_only, :first_half_sessions)
+
+struct SubsetSpec
+    id::String
+    label::String
+    csv_name::String
+end
+
+const DATA_SUBSET_SPECS = Dict(
+    :all_sessions => SubsetSpec(
+        "s6_17_all_cues",
+        "sessions 6–17, all cues",
+        "ccp001_mis_lba_params_s6_17_all_cues.csv"
+    ),
+    :dual_cue_only => SubsetSpec(
+        "s6_17_dual_cue",
+        "sessions 6–17, dual-cue only",
+        "ccp001_mis_lba_params_s6_17_dual_cue.csv"
+    ),
+    :first_half_sessions => SubsetSpec(
+        "s6_11_all_cues",
+        "sessions 6–11, all cues",
+        "ccp001_mis_lba_params_s6_11_all_cues.csv"
+    )
+)
 
 function cuevalues_to_rewards(v)::Vector{Int}
     s = lpad(string(v), 4, '0')
@@ -152,18 +184,19 @@ function load_ccp001_subject(data_dir::String)::DataFrame
     DataFrame(rows)
 end
 
-function filter_by_data_chunk(data::DataFrame, chunk::Symbol)::DataFrame
-    if chunk == :full
+function apply_data_subset(data::DataFrame, subset::Symbol)::DataFrame
+    if subset == :all_sessions
         return data
-    elseif chunk == :dual_cue
+    elseif subset == :dual_cue_only
         return filter(row -> string(row.CueCondition) in DUAL_CUE_CONDITIONS, data)
+    elseif subset == :first_half_sessions
+        return filter(
+            row -> EXPERIMENT_SESSION_FIRST <= row.Session <= FIRST_HALF_SESSION_LAST,
+            data
+        )
     else
-        error("Unknown data chunk: $chunk")
+        error("Unknown data subset: $subset")
     end
-end
-
-function results_csv_name(chunk::Symbol)
-    chunk == :full ? "ccp001_mis_lba_params_full.csv" : "ccp001_mis_lba_params_dual_cue.csv"
 end
 
 function t0_upper_bound(rt_sec::Vector{Float64})
@@ -279,31 +312,17 @@ function mis_lba_neg_loglik(
     nll
 end
 
-function fit_subject_lba(trial_rewards_arrarr, chosen_idx, rt_sec, r_max::Int; prob_model::Symbol, epsilon::Float64)
-    cue_number_type = [count(!=(0), r) == 1 ? :single : :multi for r in trial_rewards_arrarr]
-    t0_upper = t0_upper_bound(rt_sec)
-
-    spec = build_minimal_lba_indices(t0_upper)
-    obj = x -> mis_lba_neg_loglik(
-        x, trial_rewards_arrarr, chosen_idx, rt_sec, r_max, cue_number_type,
-        spec.idx_theta, spec.idx_omega0, spec.idx_CI, spec.idx_A, spec.idx_k, spec.idx_t0;
-        prob_model, epsilon
-    )
-
-    fit = optimize(obj, spec.lower, spec.upper, spec.x0, Fminbox(NelderMead()))
-    best = Optim.minimizer(fit)
-    (params=params_namedtuple(spec.param_names, best), nll=Optim.minimum(fit))
-end
-
 function params_namedtuple(param_names::Vector{String}, best::Vector{Float64})
     NamedTuple{Tuple(Symbol.(param_names))}(Tuple(best))
 end
 
-function fit_result_row(subject_id::String, n_trials::Int, param_names::Vector{String}, best::Vector{Float64}, nll::Float64, data_chunk::Symbol)
+function fit_result_row(subject_id::String, n_trials::Int, param_names::Vector{String}, best::Vector{Float64}, nll::Float64, subset::Symbol)
     fit = params_namedtuple(param_names, best)
+    spec = DATA_SUBSET_SPECS[subset]
     (
         subject_id = subject_id,
-        data_chunk = String(data_chunk),
+        data_subset = spec.id,
+        subset_label = spec.label,
         n_trials = n_trials,
         theta = fit.theta,
         omega0 = fit.omega0,
@@ -315,7 +334,7 @@ function fit_result_row(subject_id::String, n_trials::Int, param_names::Vector{S
     )
 end
 
-function plot_parameter_lines(results::DataFrame, fig_path::String; prob_model::Symbol, epsilon::Float64)
+function plot_parameter_lines(results::DataFrame, fig_path::String; prob_model::Symbol, epsilon::Float64, subset_label::String)
     subjects = results.subject_id
     x = 1:nrow(results)
     param_cols = [:theta, :omega0, :CI, :A, :k, :t0]
@@ -336,7 +355,7 @@ function plot_parameter_lines(results::DataFrame, fig_path::String; prob_model::
     plot(
         plots...;
         layout=(length(param_cols), 1), size=(720, 900),
-        plot_title="CCP001 MIS+LBA parameters ($title_suffix)",
+        plot_title="CCP001 MIS+LBA ($subset_label, $title_suffix)",
         bottom_margin=5Plots.mm
     )
     savefig(fig_path)
@@ -345,6 +364,7 @@ end
 # --- Main ---
 @assert isdir(CCP001_BASE) "CCP001 data folder not found: $(CCP001_BASE)"
 
+subset_spec = DATA_SUBSET_SPECS[DATA_SUBSET]
 fig_dir = joinpath(@__DIR__, "figs", "figs_jun16")
 mkpath(fig_dir)
 
@@ -360,15 +380,11 @@ for (subj_id, subj_dir) in all_subjects
 end
 
 println("CCP001 base: ", CCP001_BASE)
-println("Data chunk: ", DATA_CHUNK)
+println("Data subset: ", DATA_SUBSET, " (", subset_spec.label, ")")
+println("First-half sessions: ", EXPERIMENT_SESSION_FIRST, "–", FIRST_HALF_SESSION_LAST)
 println("Required session for inclusion: ", REQUIRED_SESSION)
 println("Completed subjects: ", [s for (s, _) in completed])
 println("Excluded (no ses$(REQUIRED_SESSION)): ", incomplete)
-println("prob_model: ", prob_model)
-println("epsilon: ", epsilon)
-println("vary_CI_by_cue_number: ", vary_CI_by_cue_number)
-println("vary_k_by_cue_number: ", vary_k_by_cue_number)
-println("vary_t0_by_cue_number: ", vary_t0_by_cue_number)
 @assert !isempty(completed) "No completed CCP001 subjects found with session $(REQUIRED_SESSION)."
 
 fit_rows = NamedTuple[]
@@ -376,8 +392,8 @@ for (subj_id, subj_dir) in completed
     println("\n--- Fitting ", subj_id, " ---")
     println("data_dir: ", subj_dir)
     data = load_ccp001_subject(subj_dir)
-    data = filter_by_data_chunk(data, DATA_CHUNK)
-    @assert nrow(data) > 0 "No usable trials for $(subj_id) with data_chunk=$(DATA_CHUNK)"
+    data = apply_data_subset(data, DATA_SUBSET)
+    @assert nrow(data) > 0 "No usable trials for $(subj_id) with subset=$(DATA_SUBSET)"
     trial_rewards_arrarr, chosen_idx, rt_sec, r_max = prepare_lba_trials(data)
 
     cue_number_type = [count(!=(0), r) == 1 ? :single : :multi for r in trial_rewards_arrarr]
@@ -399,17 +415,16 @@ for (subj_id, subj_dir) in completed
     end
     println("NLL: ", round(nll, digits=2))
 
-    push!(fit_rows, fit_result_row(subj_id, nrow(data), spec.param_names, best, nll, DATA_CHUNK))
+    push!(fit_rows, fit_result_row(subj_id, nrow(data), spec.param_names, best, nll, DATA_SUBSET))
 end
 
 results = DataFrame(fit_rows)
-results_path = joinpath(fig_dir, results_csv_name(DATA_CHUNK))
+results_path = joinpath(fig_dir, subset_spec.csv_name)
 CSV.write(results_path, results)
 println("\nSaved parameter table: ", results_path)
 
 fig_suffix = prob_model == :noise_model ? "_noise_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
-chunk_suffix = DATA_CHUNK == :full ? "_full" : "_dual_cue"
-fig_path = joinpath(fig_dir, "ccp001_mis_lba_param_lines$(chunk_suffix)$(fig_suffix).png")
-plot_parameter_lines(results, fig_path; prob_model, epsilon)
+fig_path = joinpath(fig_dir, "ccp001_mis_lba_param_lines_$(subset_spec.id)$(fig_suffix).png")
+plot_parameter_lines(results, fig_path; prob_model, epsilon, subset_label=subset_spec.label)
 println("Saved plot: ", fig_path)
-println("Combine full + dual_cue with: julia plot_ccp001_mis_lba_params_by_chunk.jl")
+println("Compare subsets: julia plot_ccp001_mis_lba_params_compare.jl")
