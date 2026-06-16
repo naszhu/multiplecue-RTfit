@@ -8,97 +8,160 @@ epsilon = 0.05
 @assert prob_model in (:original, :noise_model) "prob_model must be :original or :noise_model."
 @assert 0.0 <= epsilon <= 1.0 "epsilon must be in [0, 1]."
 
-# Data source config (set ONE ID here, then extend the mapping below as needed):
-# - CCP001_S1 (lab-processed source)
-# - CPP001_S1 / CPP001_S2 / CPP001_S3
-# - CPP002_S1 / CPP002_S2 / CPP002_S3
-data_source_id = "CPP001_S1"
-# data_source_id = "CCP001_S1"
-data_source_paths = Dict(
-    "CCP001_S1" => joinpath(@__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"),
-    "CPP001_S1" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 1", "extracted data"),
-    "CPP001_S2" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 2", "extracted data"),
-    "CPP001_S3" => joinpath(@__DIR__, "..", "data", "CPP001 - subj 3", "extracted data"),
-    "CPP002_S1" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-001", "extracted data"),
-    "CPP002_S2" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-002", "extracted data"),
-    "CPP002_S3" => joinpath(@__DIR__, "..", "data", "ParticipantCPP002-003", "extracted data")
+const CCP001_BASE = joinpath(@__DIR__, "..", "data", "CCP001")
+const CCP001_PROCESSED_FALLBACK = joinpath(
+    @__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab", "extracted_data_processed"
 )
-@assert haskey(data_source_paths, data_source_id) "Unknown data_source_id: $(data_source_id). Add it to data_source_paths."
-data_label = data_source_id
-data_dir = data_source_paths[data_source_id]
-files = filter(f -> endswith(f, ".csv"), readdir(data_dir; join=true))
-@assert !isempty(files) "No CSV files found in data_dir: $(data_dir)"
-println("data_source_id: ", data_source_id)
-println("data_label: ", data_label)
-println("data_dir: ", data_dir)
-col_types = Dict(
-    :Cues => String,
-    :CueValues => String,
-    :CueRanks => String,
-    :RespLoc => String
-)
-frames = DataFrame[]
-for f in files
-    hdr = names(CSV.read(f, DataFrame; limit=0))
-    has_warmup = "WarmUpTrial" in string.(hdr)
-    if has_warmup
-        push!(frames, CSV.read(f, DataFrame;
-            types=col_types,
-            select=[:Session, :WarmUpTrial, :CueValues, :PointTargetResponse, :CueCondition]
-        ))
+const REQUIRED_SESSION = 17
+const MIN_SESSION = 6
+
+const ALLOWED_CONDITIONS = Set([
+    "(1)", "(2)", "(3)", "(4)",
+    "(2,1)", "(3,1)", "(4,1)", "(3,2)", "(4,2)", "(4,3)"
+])
+
+function cuevalues_to_rewards(v)::Vector{Int}
+    s = lpad(string(v), 4, '0')
+    @assert ncodeunits(s) == 4 "CueValues must map to 4 digits, got: $v"
+    parse.(Int, collect(s))
+end
+
+function derive_condition_label(v)::Union{String, Nothing}
+    rewards = cuevalues_to_rewards(v)
+    non_zero = filter(>(0), rewards)
+    isempty(non_zero) && return nothing
+    cond = join(sort(unique(non_zero); rev=true), ",")
+    label = "($cond)"
+    label in ALLOWED_CONDITIONS ? label : nothing
+end
+
+function parse_choice_value(candidate)::Union{Int, Nothing}
+    if candidate isa Integer
+        val = Int(candidate)
     else
-        println("WARNING: Missing WarmUpTrial in file: ", f, " -> assigning WarmUpTrial=1 for all rows (will be excluded by WarmUpTrial==0 filter).")
-        df = CSV.read(f, DataFrame;
-            types=col_types,
-            select=[:Session, :CueValues, :PointTargetResponse, :CueCondition]
-        )
-        df.WarmUpTrial = ones(Int, nrow(df))
-        select!(df, [:Session, :WarmUpTrial, :CueValues, :PointTargetResponse, :CueCondition])
-        push!(frames, df)
+        val = try
+            parse(Int, string(candidate))
+        catch
+            return nothing
+        end
     end
+    val in 1:4 ? val : nothing
 end
-data = reduce(vcat, frames; cols=:setequal)
-@assert eltype(data.PointTargetResponse) <: Number "PointTargetResponse must be read as a numeric column."
-@assert eltype(data.Session) <: Number "Session must be read as a numeric column."
-@assert eltype(data.WarmUpTrial) <: Number "WarmUpTrial must be read as a numeric column."
 
-# Keep only session 6 and later.
-data = filter(row -> Int(row.Session) >= 6, data)
+function resolve_choice(resp_loc, point_target_response)::Union{Int, Nothing}
+    # Prefer RespLoc for CCP trials.csv; fall back to PointTargetResponse for raw extracts.
+    for candidate in (resp_loc, point_target_response)
+        val = parse_choice_value(candidate)
+        val !== nothing && return val
+    end
+    return nothing
+end
 
-# Keep only main trials (WarmUpTrial == 0).
-data = filter(row -> Int(row.WarmUpTrial) == 0, data)
+function has_required_session(data_dir::String, session::Int)::Bool
+    any(occursin("ses$(session)", basename(f)) for f in readdir(data_dir))
+end
 
-# Keep only trials with an actual choice location; 0 means timeout.
-data = filter(row -> Int(row.PointTargetResponse) in 1:4, data)
-# Require CueValues to be exactly 4 characters in every row.
-@assert all(ncodeunits(string(v)) == 4 for v in data.CueValues) "CueValues must be 4-character strings in all rows."
+function resolve_csv_path(data_dir::String, file_path::String)
+    # Raw session CSVs in CCP001 may lack processed choice labels; use lab-processed copy when present.
+    if endswith(file_path, "_trials.csv")
+        return file_path
+    end
+    processed = joinpath(CCP001_PROCESSED_FALLBACK, basename(file_path))
+    isfile(processed) ? processed : file_path
+end
 
-# Convert CPP cue-condition numeric codes (1..10) to CCP-style labels ((1)..(4,3)).
-condition_code_to_label = Dict(
-    "1" => "(1)", "2" => "(2)", "3" => "(3)", "4" => "(4)",
-    "5" => "(2,1)", "6" => "(3,1)", "7" => "(4,1)", "8" => "(3,2)", "9" => "(4,2)", "10" => "(4,3)"
+function list_trial_csv_files(data_dir::String)
+    filter(f -> endswith(f, ".csv") && !occursin("metadata", basename(f)), readdir(data_dir; join=true))
+end
+
+function discover_ccp001_subjects(base_dir::String)
+    subjects = Tuple{String, String}[]
+    for name in sort(readdir(base_dir))
+        m = match(r"^CCP001 - sub (\d+)$", name)
+        m === nothing && continue
+        subj_id = "S$(m.captures[1])"
+        subj_dir = joinpath(base_dir, name)
+        isdir(subj_dir) || continue
+        push!(subjects, (subj_id, subj_dir))
+    end
+    subjects
+end
+
+function load_ccp001_subject(data_dir::String)::DataFrame
+    files = list_trial_csv_files(data_dir)
+    @assert !isempty(files) "No trial CSV files found in: $(data_dir)"
+
+    col_types = Dict(
+        :Cues => String,
+        :CueRanks => String
+    )
+
+    frames = DataFrame[]
+    for f in files
+        src = resolve_csv_path(data_dir, f)
+        hdr = names(CSV.read(src, DataFrame; limit=0))
+        has_warmup = "WarmUpTrial" in string.(hdr)
+        if has_warmup
+            push!(frames, CSV.read(src, DataFrame;
+                types=col_types,
+                select=[:Session, :WarmUpTrial, :CueValues, :RespLoc, :PointTargetResponse, :CueCondition]
+            ))
+        else
+            df = CSV.read(src, DataFrame;
+                types=col_types,
+                select=[:Session, :CueValues, :RespLoc, :PointTargetResponse, :CueCondition]
+            )
+            df.WarmUpTrial = ones(Int, nrow(df))
+            select!(df, [:Session, :WarmUpTrial, :CueValues, :RespLoc, :PointTargetResponse, :CueCondition])
+            push!(frames, df)
+        end
+    end
+
+    data = reduce(vcat, frames; cols=:setequal)
+    rows = NamedTuple[]
+    for row in eachrow(data)
+        Int(row.Session) < MIN_SESSION && continue
+        Int(row.WarmUpTrial) != 0 && continue
+        choice = resolve_choice(row.RespLoc, row.PointTargetResponse)
+        choice === nothing && continue
+        cond = string(row.CueCondition)
+        if !(startswith(cond, "(") && cond in ALLOWED_CONDITIONS)
+            cond = derive_condition_label(row.CueValues)
+            cond === nothing && continue
+        end
+        push!(rows, (
+            Session = Int(row.Session),
+            CueValues = row.CueValues,
+            Choice = choice,
+            CueCondition = cond
+        ))
+    end
+    DataFrame(rows)
+end
+
+function prepare_trials(data::DataFrame)
+    trial_rewards_arrarr = [cuevalues_to_rewards(v) for v in data.CueValues]
+    chosen_idx = data.Choice
+    r_max = maximum(vcat(trial_rewards_arrarr...))
+    (trial_rewards_arrarr, chosen_idx, r_max)
+end
+
+function mis_neg_loglik(
+    x::Vector{Float64},
+    trial_rewards_arrarr,
+    chosen_idx,
+    r_max::Int;
+    prob_model::Symbol,
+    epsilon::Float64
 )
-if startswith(data_source_id, "CPP")
-    data.CueCondition = [get(condition_code_to_label, string(cc), string(cc)) for cc in data.CueCondition]
-end
-
-# Precompute arrays for faster MLE optimization.
-trial_rewards_arrarr = [parse.(Int, collect(string(v))) for v in data.CueValues]
-chosen_idx = Int.(data.PointTargetResponse)
-r_max = maximum(vcat(trial_rewards_arrarr...))
-eps_val = 1e-12
-
-# MLE over parameters needed in this experiment:
-# theta  = reward-to-weight sensitivity
-# omega0 = baseline weight for zero-reward options
-obj = x -> begin
     theta = x[1]
     omega0 = x[2]
+    eps_val = 1e-12
     nll = 0.0
     for i in eachindex(trial_rewards_arrarr)
         r = trial_rewards_arrarr[i]
         w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in r]
-        p = w ./ sum(w) # softmax-like probability
+        p = w ./ sum(w)
         if prob_model == :noise_model
             p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
         end
@@ -107,87 +170,97 @@ obj = x -> begin
     nll
 end
 
-# lower/upper: [theta (reward-to-weight sensitivity), omega0 (baseline weight for zero-reward options)]
-lower = [0.0, 1e-6]
-# Cap theta to reduce near-deterministic softmax collapse in noise-model fits.
-upper = [30.0, 50.0]
-x0 = [1.0, 0.1]
-fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
-best = Optim.minimizer(fit)
-theta_hat = best[1]
-omega0_hat = best[2]
-nll = Optim.minimum(fit)
-
-chosen_prob = Float64[]
-for i in eachindex(trial_rewards_arrarr)
-    r = trial_rewards_arrarr[i]
-    w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
-    p = w ./ sum(w)
-    if prob_model == :noise_model
-        p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
-    end
-    push!(chosen_prob, p[chosen_idx[i]])
+function fit_subject(
+    trial_rewards_arrarr,
+    chosen_idx,
+    r_max::Int;
+    prob_model::Symbol,
+    epsilon::Float64
+)
+    obj = x -> mis_neg_loglik(x, trial_rewards_arrarr, chosen_idx, r_max; prob_model, epsilon)
+    lower = [0.0, 1e-6]
+    upper = [30.0, 50.0]
+    x0 = [1.0, 0.1]
+    fit = optimize(obj, lower, upper, x0, Fminbox(NelderMead()))
+    best = Optim.minimizer(fit)
+    (theta = best[1], omega0 = best[2], nll = Optim.minimum(fit))
 end
 
-println("Trials used: ", nrow(data))
-println("prob_model: ", prob_model)
-println("epsilon: ", epsilon)
-println("theta_hat: ", round(theta_hat, digits=6))
-println("omega0_hat: ", round(omega0_hat, digits=6))
-println("Mean predicted p(chosen): ", round(mean(chosen_prob), digits=4))
-println("NLL: ", round(nll, digits=2))
+function plot_parameter_distribution(results::DataFrame, fig_path::String; prob_model::Symbol, epsilon::Float64)
+    subjects = results.subject_id
+    x = 1:nrow(results)
 
-plot_cond = String[]
-plot_pred = Float64[]
-plot_data = Float64[]
+    p_theta = bar(
+        x, results.theta;
+        xticks=(x, subjects), xrotation=45,
+        ylabel="theta", legend=false, color=:steelblue
+    )
+    p_omega = bar(
+        x, results.omega0;
+        xticks=(x, subjects), xrotation=45,
+        ylabel="omega0", legend=false, color=:darkorange
+    )
 
-# Canonical condition order from metadata.
-condition_order = ["(1)", "(2)", "(3)", "(4)", "(2,1)", "(3,1)", "(4,1)", "(3,2)", "(4,2)", "(4,3)"]
-present_conditions = Set(string.(unique(data.CueCondition)))
-ordered_conditions = [cc for cc in condition_order if cc in present_conditions]
-
-for cc in ordered_conditions
-    cond_rows = filter(row -> string(row.CueCondition) == cc, data)
-    cond_chosen_prob = Float64[]
-    cond_pred_best = Float64[]
-    cond_data_best = Float64[]
-    for trial_row in eachrow(cond_rows)
-        r = parse.(Int, collect(string(trial_row.CueValues)))
-        w = [rv == 0 ? omega0_hat : exp(theta_hat * rv / r_max) for rv in r]
-        p = w ./ sum(w)
-        if prob_model == :noise_model
-            p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
-        end
-        chosen_location = Int(trial_row.PointTargetResponse)
-        push!(cond_chosen_prob, p[chosen_location])
-        best_reward = maximum(r)
-        best_idx = findall(==(best_reward), r)
-        push!(cond_pred_best, sum(p[best_idx]))
-        push!(cond_data_best, chosen_location in best_idx ? 1.0 : 0.0)
-    end
-    println(cc, " -> n=", nrow(cond_rows), ", mean p(chosen)=", round(mean(cond_chosen_prob), digits=4))
-    push!(plot_cond, cc)
-    push!(plot_pred, mean(cond_pred_best))
-    push!(plot_data, mean(cond_data_best))
+    title_suffix = prob_model == :noise_model ? "noise eps=$(epsilon)" : "original"
+    plot(
+        p_theta, p_omega;
+        layout=(2, 1), size=(700, 520),
+        plot_title="CCP001 MIS parameters ($title_suffix)",
+        bottom_margin=5Plots.mm
+    )
+    savefig(fig_path)
 end
 
-x = collect(1:length(plot_cond))
-pfig = plot(
-    x, plot_pred;
-    label="Prediction", marker=:circle, lw=2, color=:blue,
-    ylim=(0.8, 1.1)
-)
-plot!(
-    pfig, x, plot_data;
-    label="Data", marker=:diamond, lw=2, color=:red
-)
-xticks!(pfig, (x, plot_cond))
-xlabel!(pfig, "Condition")
-ylabel!(pfig, "Probability chosen")
-title!(pfig, "Prediction vs Data by CueCondition ($(data_label))")
-fig_dir = joinpath(@__DIR__, "figs")
-isdir(fig_dir) || mkdir(fig_dir)
-fig_suffix = prob_model == :noise_model ? "_noise_model_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
-fig_path = joinpath(fig_dir, "mis_basic_$(lowercase(data_label))_pred_vs_data$(fig_suffix).png")
-savefig(pfig, fig_path)
+# --- Main: fit all completed CCP001 subjects ---
+@assert isdir(CCP001_BASE) "CCP001 data folder not found: $(CCP001_BASE)"
+
+fig_dir = joinpath(@__DIR__, "figs", "figs_jun16")
+mkpath(fig_dir)
+
+all_subjects = discover_ccp001_subjects(CCP001_BASE)
+completed = Tuple{String, String}[]
+incomplete = String[]
+for (subj_id, subj_dir) in all_subjects
+    if has_required_session(subj_dir, REQUIRED_SESSION)
+        push!(completed, (subj_id, subj_dir))
+    else
+        push!(incomplete, subj_id)
+    end
+end
+
+println("CCP001 base: ", CCP001_BASE)
+println("Required session for inclusion: ", REQUIRED_SESSION)
+println("Completed subjects: ", [s for (s, _) in completed])
+println("Excluded (no ses$(REQUIRED_SESSION)): ", incomplete)
+@assert !isempty(completed) "No completed CCP001 subjects found with session $(REQUIRED_SESSION)."
+
+fit_rows = NamedTuple[]
+for (subj_id, subj_dir) in completed
+    println("\n--- Fitting ", subj_id, " ---")
+    println("data_dir: ", subj_dir)
+    data = load_ccp001_subject(subj_dir)
+    @assert nrow(data) > 0 "No usable trials for $(subj_id) in $(subj_dir)"
+    trial_rewards_arrarr, chosen_idx, r_max = prepare_trials(data)
+    fit = fit_subject(trial_rewards_arrarr, chosen_idx, r_max; prob_model, epsilon)
+    println("Trials used: ", nrow(data))
+    println("theta_hat: ", round(fit.theta, digits=6))
+    println("omega0_hat: ", round(fit.omega0, digits=6))
+    println("NLL: ", round(fit.nll, digits=2))
+    push!(fit_rows, (
+        subject_id = subj_id,
+        n_trials = nrow(data),
+        theta = fit.theta,
+        omega0 = fit.omega0,
+        nll = fit.nll
+    ))
+end
+
+results = DataFrame(fit_rows)
+results_path = joinpath(fig_dir, "ccp001_mis_params.csv")
+CSV.write(results_path, results)
+println("\nSaved parameter table: ", results_path)
+
+fig_suffix = prob_model == :noise_model ? "_noise_eps$(replace(string(round(epsilon, digits=3)), "." => "p"))" : "_original"
+fig_path = joinpath(fig_dir, "ccp001_param_dist$(fig_suffix).png")
+plot_parameter_distribution(results, fig_path; prob_model, epsilon)
 println("Saved plot: ", fig_path)
