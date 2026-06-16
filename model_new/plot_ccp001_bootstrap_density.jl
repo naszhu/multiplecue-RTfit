@@ -10,7 +10,7 @@
 #
 # CLI args take priority over DEFAULT_* below. Edit X_LIMS in config as needed.
 
-using CSV, DataFrames, Statistics, Plots, KernelDensity
+using CSV, DataFrames, Statistics, Plots, KernelDensity, Printf
 
 # --- Config (used when no CLI args) ---
 const DEFAULT_SUBJECT_ID = "S2"
@@ -21,20 +21,27 @@ const FIG_DIR = joinpath(@__DIR__, "figs", "figs_jun16", "bootstrap")
 const PARAM_COLS = [:theta, :omega0, :CI, :A, :k, :t0]
 const PARAM_LABELS = ["theta", "omega0", "CI", "A", "k", "t0"]
 
-# X-axis limits per parameter (edit freely). Use `nothing` to auto-fit from data + padding.
+# X-axis limits per parameter. Use `nothing` for automatic subject-specific limits.
+# Set a tuple to override manually, e.g. :theta => (7.0, 11.0)
 const X_LIMS = Dict{Symbol, Union{Nothing, Tuple{Float64, Float64}}}(
-    :theta  => (7.0, 11.0),
-    :omega0 => (0.05, 0.45),
-    :CI     => (3.7, 4.6),
-    :A      => (0.9, 1.35),
-    :k      => (0.6, 1.1),
-    :t0     => (0.32, 0.40),
+    :theta  => nothing,
+    :omega0 => nothing,
+    :CI     => nothing,
+    :A      => nothing,
+    :k      => nothing,
+    :t0     => nothing,
 )
+
+# Auto xlim tuning (used when X_LIMS[param] == nothing)
+const AUTO_XLIM_Q_LO = 0.05      # robust lower quantile of all bootstrap reps
+const AUTO_XLIM_Q_HI = 0.95      # robust upper quantile
+const AUTO_XLIM_PAD_FRAC = 0.08  # padding as fraction of core span
+const AUTO_XLIM_PAD_IQR = 0.20   # minimum padding as fraction of IQR
+const AUTO_XLIM_PRINT = true     # print computed limits when plotting
 
 # Light -> dark blue gradient (10% -> 100% trial fraction). Edit hex stops if needed.
 const FRAC_COLOR_GRADIENT = ["#B3D9F2", "#6BAED6", "#3182BD", "#08519C", "#08306B"]
 
-const AUTO_XLIM_PAD = 0.04   # fraction of data range added on each side when auto
 const SHOW_MODE_LINES = true
 const MODE_LINE_STYLE = :dash
 const MODE_LINE_LW = 1.75
@@ -119,17 +126,53 @@ function kde_mode(ys::Vector{Float64})::Float64
     median(ys)
 end
 
-function resolve_xlims(col::Symbol, ys::Vector{Float64})
+function auto_xlims(
+    col::Symbol,
+    ys::Vector{Float64},
+    results::DataFrame,
+    fractions::Vector{Float64},
+)::Tuple{Float64, Float64}
+    v = filter(isfinite, ys)
+    isempty(v) && return (0.0, 1.0)
+
+    qs = quantile(v, [AUTO_XLIM_Q_LO, 0.25, 0.75, AUTO_XLIM_Q_HI])
+    q_lo, q25, q75, q_hi = qs
+    iqr = max(q75 - q25, 1e-6)
+
+    modes = Float64[]
+    for frac in fractions
+        sub = results[results.trial_fraction .≈ frac, :]
+        push!(modes, kde_mode(Vector{Float64}(sub[!, col])))
+    end
+    modes = filter(isfinite, modes)
+
+    core_lo = isempty(modes) ? q_lo : min(q_lo, minimum(modes))
+    core_hi = isempty(modes) ? q_hi : max(q_hi, maximum(modes))
+    core_span = max(core_hi - core_lo, iqr)
+
+    pad = max(core_span * AUTO_XLIM_PAD_FRAC, iqr * AUTO_XLIM_PAD_IQR)
+    lo = core_lo - pad
+    hi = core_hi + pad
+
+    # keep non-negative parameters readable (omega0, A, k, t0)
+    if col in (:omega0, :A, :k, :t0)
+        lo = max(lo, 0.0)
+    end
+
+    lo, hi
+end
+
+function resolve_xlims(
+    col::Symbol,
+    ys::Vector{Float64},
+    results::DataFrame,
+    fractions::Vector{Float64},
+)
     cfg = get(X_LIMS, col, nothing)
     if cfg !== nothing
         return cfg
     end
-    v = filter(isfinite, ys)
-    isempty(v) && return (0.0, 1.0)
-    lo, hi = extrema(v)
-    span = max(hi - lo, 1e-6)
-    pad = span * AUTO_XLIM_PAD
-    (lo - pad, hi + pad)
+    auto_xlims(col, ys, results, fractions)
 end
 
 function load_bootstrap_results(path::String)::DataFrame
@@ -159,7 +202,10 @@ function plot_bootstrap_density_v2(
             sub = results[results.trial_fraction .≈ frac, :]
             append!(all_ys, Vector{Float64}(sub[!, col]))
         end
-        xlims = resolve_xlims(col, all_ys)
+        xlims = resolve_xlims(col, all_ys, results, fractions)
+        if AUTO_XLIM_PRINT && get(X_LIMS, col, nothing) === nothing
+            @printf("  xlim %-6s = (%.4f, %.4f)\n", PARAM_LABELS[i], xlims[1], xlims[2])
+        end
 
         p = plot(
             legend=(i == 1 ? :topright : false),
@@ -223,6 +269,9 @@ function plot_ccp001_bootstrap_density(;
     println("Subject: ", subj, "  run_tag: ", tag)
     println("Loaded ", nrow(results), " rows from ", results_csv)
     println("Trial fractions: ", sort(unique(results.trial_fraction)))
+    if AUTO_XLIM_PRINT && all(get(X_LIMS, col, nothing) === nothing for col in PARAM_COLS)
+        println("Auto x-limits:")
+    end
     println("Writing figure: ", out_fig)
 
     plot_bootstrap_density_v2(results, out_fig, subj, tag)

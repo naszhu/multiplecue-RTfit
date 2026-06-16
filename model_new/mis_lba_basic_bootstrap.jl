@@ -578,7 +578,9 @@ function plot_from_results(results::DataFrame)
         return nothing
     end
     include(PLOT_SCRIPT)
-    plot_ccp001_bootstrap_density(; subject_id=SUBJECT_ID, run_tag=RUN_TAG)
+    Base.invokelatest() do
+        plot_ccp001_bootstrap_density(; subject_id=SUBJECT_ID, run_tag=RUN_TAG)
+    end
 end
 
 results = run_bootstrap()
