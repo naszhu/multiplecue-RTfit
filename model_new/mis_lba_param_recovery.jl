@@ -9,11 +9,11 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Kerne
 using Random, Printf, Dates
 
 # --- Run mode (change this one line) ---
-const RUN_MODE = :check  # :check | :full
+const RUN_MODE = :full  # :check | :full
 
 # --- Shared model / data config ---
-const SUBJECT_ID = "S2"
-const DESIGN_SUBJECT_ID = "S1"   # whose session 6–17 trial schedule to mirror
+const SUBJECT_ID = "S5"
+const DESIGN_SUBJECT_ID = "S5"   # whose session 6–17 trial schedule to mirror
 const RANDOM_SEED = 20260616
 
 prob_model = :noise_model
