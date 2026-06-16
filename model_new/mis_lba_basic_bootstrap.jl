@@ -458,85 +458,6 @@ function save_results!(path::String, existing::DataFrame, new_rows::Vector{Named
     combined
 end
 
-# --- Density plots ---
-
-function safe_kde(values::Vector{Float64})
-    v = filter(isfinite, values)
-    length(v) < 2 && return nothing
-    length(unique(v)) < 2 && return nothing
-    try
-        kde(v)
-    catch
-        nothing
-    end
-end
-
-function plot_fraction_density!(p, ys::Vector{Float64}, label::String, color)
-    u = length(unique(ys))
-    if u == 1
-        # All reps landed on the same value — show a vertical line, not a wide block.
-        val = ys[1]
-        plot!(p, [val, val], [0.0, 1.05]; label=label, color=color, lw=3, linestyle=:solid)
-        return
-    end
-    dens = safe_kde(ys)
-    if dens !== nothing
-        plot!(p, dens.x, dens.density; label=label, color=color, lw=2.5, alpha=0.75)
-    else
-        # Few distinct values: thin rug ticks along the bottom.
-        scatter!(
-            p, ys, fill(0.0, length(ys));
-            label=label,
-            color=color,
-            marker=:vline,
-            markersize=4,
-            alpha=0.6
-        )
-    end
-end
-
-function plot_bootstrap_densities(results::DataFrame, fig_path::String; log_omega0::Bool=false)
-    fractions = sort(unique(results.trial_fraction))
-    plots = Vector{Any}(undef, length(PARAM_COLS))
-
-    for (i, col) in enumerate(PARAM_COLS)
-        p = plot(legend=(i == 1 ? :topright : false), size=(500, 280))
-        for (j, frac) in enumerate(fractions)
-            sub = results[results.trial_fraction .≈ frac, :]
-            ys = Vector{Float64}(sub[!, col])
-            if col == :omega0 && log_omega0
-                ys = log10.(max.(ys, 1e-6))
-            end
-            label = "$(fraction_label(frac)) (n=$(nrow(sub)), u=$(length(unique(ys))))"
-            plot_fraction_density!(
-                p, ys, label, FRAC_COLORS[mod1(j, length(FRAC_COLORS))]
-            )
-        end
-        ylab = col == :omega0 && log_omega0 ? "log10(omega0)" : string(col)
-        plot!(
-            p;
-            xlabel=ylab,
-            ylabel="density",
-            title="$(SUBJECT_ID): $(ylab) by trial fraction",
-            legend=(i == 1)
-        )
-        plots[i] = p
-    end
-
-    n = length(plots)
-    ncols = 2
-    nrows = ceil(Int, n / ncols)
-    title_suffix = prob_model == :noise_model ? "noise eps=$(epsilon)" : "original"
-    fig = plot(
-        plots...;
-        layout=(nrows, ncols),
-        size=(1000, 280 * nrows),
-        plot_title="CCP001 MIS+LBA bootstrap ($(SUBJECT_ID), $(title_suffix))",
-        bottom_margin=4Plots.mm
-    )
-    savefig(fig, fig_path)
-end
-
 # --- Main ---
 
 function run_bootstrap()
@@ -651,11 +572,13 @@ function summarize_bootstrap_results(results::DataFrame)
 end
 
 function plot_from_results(results::DataFrame)
-    println("Plotting parameter densities ...")
-    plot_bootstrap_densities(results, DENSITY_FIG; log_omega0=false)
-    println("Saved density plot: ", DENSITY_FIG)
-    plot_bootstrap_densities(results, DENSITY_FIG_LOG_OMEGA; log_omega0=true)
-    println("Saved omega0 log-density plot: ", DENSITY_FIG_LOG_OMEGA)
+    println("\nBootstrap fits saved (", nrow(results), " rows). Plotting densities ...")
+    if !isfile(PLOT_SCRIPT)
+        println("WARNING: plot script not found: ", PLOT_SCRIPT)
+        return nothing
+    end
+    include(PLOT_SCRIPT)
+    plot_ccp001_bootstrap_density(; subject_id=SUBJECT_ID, run_tag=RUN_TAG)
 end
 
 results = run_bootstrap()

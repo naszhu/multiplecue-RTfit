@@ -1,17 +1,22 @@
 # Plot bootstrap parameter distributions from saved CSV (no refitting).
-# Run:  julia plot_ccp001_bootstrap_density.jl
 #
-# Edit SUBJECT_ID, RUN_TAG, and X_LIMS below. Set any xlim to nothing for auto range.
+# Run (uses defaults below):
+#   julia plot_ccp001_bootstrap_density.jl
+#
+# Run with CLI override (subject, optional run tag):
+#   julia plot_ccp001_bootstrap_density.jl S3
+#   julia plot_ccp001_bootstrap_density.jl S3 full
+#   julia plot_ccp001_bootstrap_density.jl S3 check
+#
+# CLI args take priority over DEFAULT_* below. Edit X_LIMS in config as needed.
 
 using CSV, DataFrames, Statistics, Plots, KernelDensity
 
-# --- Config ---
-const SUBJECT_ID = "S2"
-const RUN_TAG = "full"   # "full" or "check" (matches bootstrap CSV suffix)
+# --- Config (used when no CLI args) ---
+const DEFAULT_SUBJECT_ID = "S2"
+const DEFAULT_RUN_TAG = "full"   # "full" or "check" (matches bootstrap CSV suffix)
 
 const FIG_DIR = joinpath(@__DIR__, "figs", "figs_jun16", "bootstrap")
-const RESULTS_CSV = joinpath(FIG_DIR, "ccp001_$(lowercase(SUBJECT_ID))_bootstrap_params_$(RUN_TAG).csv")
-const OUT_FIG = joinpath(FIG_DIR, "ccp001_$(lowercase(SUBJECT_ID))_bootstrap_density_$(RUN_TAG)_v2.png")
 
 const PARAM_COLS = [:theta, :omega0, :CI, :A, :k, :t0]
 const PARAM_LABELS = ["theta", "omega0", "CI", "A", "k", "t0"]
@@ -35,6 +40,49 @@ const MODE_LINE_STYLE = :dash
 const MODE_LINE_LW = 1.75
 const KDE_LINE_LW = 2.5
 const KDE_ALPHA = 0.75
+
+function normalize_subject_id(raw::AbstractString)::String
+    s = uppercase(strip(raw))
+    startswith(s, "S") || (s = "S" * s)
+    s
+end
+
+function normalize_run_tag(raw::AbstractString)::String
+    tag = lowercase(strip(raw))
+    tag in ("full", "check") || error("RUN_TAG must be \"full\" or \"check\"; got \"$(raw)\"")
+    tag
+end
+
+function resolve_subject_and_run_tag(;
+    subject_id::Union{Nothing, AbstractString}=nothing,
+    run_tag::Union{Nothing, AbstractString}=nothing,
+)
+    subj = if subject_id !== nothing
+        normalize_subject_id(String(subject_id))
+    elseif !isempty(ARGS)
+        normalize_subject_id(ARGS[1])
+    else
+        DEFAULT_SUBJECT_ID
+    end
+
+    tag = if run_tag !== nothing
+        normalize_run_tag(String(run_tag))
+    elseif length(ARGS) >= 2
+        normalize_run_tag(ARGS[2])
+    else
+        DEFAULT_RUN_TAG
+    end
+
+    subj, tag
+end
+
+function bootstrap_paths(subject_id::AbstractString, run_tag::AbstractString)
+    subj = normalize_subject_id(subject_id)
+    tag = normalize_run_tag(run_tag)
+    results_csv = joinpath(FIG_DIR, "ccp001_$(lowercase(subj))_bootstrap_params_$(tag).csv")
+    out_fig = joinpath(FIG_DIR, "ccp001_$(lowercase(subj))_bootstrap_density_$(tag)_v2.png")
+    subj, tag, results_csv, out_fig
+end
 
 function fraction_colors(n::Int)::Vector{String}
     n <= 0 && return String[]
@@ -95,7 +143,12 @@ function load_bootstrap_results(path::String)::DataFrame
     df
 end
 
-function plot_bootstrap_density_v2(results::DataFrame, fig_path::String)
+function plot_bootstrap_density_v2(
+    results::DataFrame,
+    fig_path::String,
+    subject_id::AbstractString,
+    run_tag::AbstractString,
+)
     fractions = sort(unique(results.trial_fraction))
     frac_colors = fraction_colors(length(fractions))
     plots = Vector{Any}(undef, length(PARAM_COLS))
@@ -151,19 +204,33 @@ function plot_bootstrap_density_v2(results::DataFrame, fig_path::String)
         plots...;
         layout=(length(PARAM_COLS), 1),
         size=(520, 220 * length(PARAM_COLS)),
-        plot_title="CCP001 MIS+LBA bootstrap ($(SUBJECT_ID), $(RUN_TAG))",
+        plot_title="CCP001 MIS+LBA bootstrap ($(subject_id), $(run_tag))",
         bottom_margin=3Plots.mm,
     )
     savefig(fig, fig_path)
 end
 
-# --- Main ---
-@assert isfile(RESULTS_CSV) "No results at $(RESULTS_CSV). Run mis_lba_basic_bootstrap.jl first."
+function plot_ccp001_bootstrap_density(;
+    subject_id::Union{Nothing, AbstractString}=nothing,
+    run_tag::Union{Nothing, AbstractString}=nothing,
+)
+    subj, tag = resolve_subject_and_run_tag(; subject_id, run_tag)
+    _, _, results_csv, out_fig = bootstrap_paths(subj, tag)
 
-results = load_bootstrap_results(RESULTS_CSV)
-println("Loaded ", nrow(results), " rows from ", RESULTS_CSV)
-println("Trial fractions: ", sort(unique(results.trial_fraction)))
-println("Writing figure: ", OUT_FIG)
+    isfile(results_csv) || error("No results at $(results_csv). Run mis_lba_basic_bootstrap.jl first.")
 
-plot_bootstrap_density_v2(results, OUT_FIG)
-println("Done.")
+    results = load_bootstrap_results(results_csv)
+    println("Subject: ", subj, "  run_tag: ", tag)
+    println("Loaded ", nrow(results), " rows from ", results_csv)
+    println("Trial fractions: ", sort(unique(results.trial_fraction)))
+    println("Writing figure: ", out_fig)
+
+    plot_bootstrap_density_v2(results, out_fig, subj, tag)
+    println("Done.")
+    out_fig
+end
+
+# --- Main (direct script run only; skipped when included from bootstrap) ---
+if abspath(PROGRAM_FILE) == @__FILE__
+    plot_ccp001_bootstrap_density()
+end
