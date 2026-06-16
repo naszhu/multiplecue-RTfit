@@ -9,7 +9,7 @@
 #
 # Re-run safely: results CSV is appended/resumed; set FORCE_REFIT=true to start over.
 
-using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, KernelDensity
+using CSV, DataFrames, Statistics, Optim, SequentialSamplingModels
 using Random, Printf, Dates
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -17,7 +17,7 @@ using Random, Printf, Dates
 const RUN_MODE = :full   # :check  or  :full
 # ═══════════════════════════════════════════════════════════════════════════════
 
-const SUBJECT_ID = "S2"
+const SUBJECT_ID = "S5"
 const RANDOM_SEED = 20260616
 const FORCE_REFIT = true         # true = ignore saved CSV and refit everything
 const RESUME_PARTIAL = true       # true = skip (fraction, rep) rows already in CSV
@@ -57,13 +57,10 @@ const ALLOWED_CONDITIONS = union(SINGLE_CUE_CONDITIONS, DUAL_CUE_CONDITIONS)
 
 const PARAM_COLS = [:theta, :omega0, :CI, :A, :k, :t0]
 const PARAM_LABELS = ["theta", "omega0", "CI", "A", "k", "t0"]
-const FRAC_COLORS = [:steelblue, :darkorange, :seagreen, :purple, :crimson]
-const FRAC_MARKERS = [:circle, :rect, :diamond, :utriangle, :dtriangle]
 
 const OUT_DIR = joinpath(@__DIR__, "figs", "figs_jun16", "bootstrap")
 const RESULTS_CSV = joinpath(OUT_DIR, "ccp001_$(lowercase(SUBJECT_ID))_bootstrap_params_$(RUN_TAG).csv")
-const DENSITY_FIG = joinpath(OUT_DIR, "ccp001_$(lowercase(SUBJECT_ID))_bootstrap_density_$(RUN_TAG).png")
-const DENSITY_FIG_LOG_OMEGA = joinpath(OUT_DIR, "ccp001_$(lowercase(SUBJECT_ID))_bootstrap_density_omega0_log_$(RUN_TAG).png")
+const PLOT_SCRIPT = joinpath(@__DIR__, "plot_ccp001_bootstrap_density.jl")
 
 # --- CCP001 data loading (from mis_lba_basic_ccp001_multi.jl) ---
 
