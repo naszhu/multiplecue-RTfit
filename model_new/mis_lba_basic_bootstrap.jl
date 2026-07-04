@@ -17,7 +17,7 @@ using Random, Printf, Dates
 const RUN_MODE = :full   # :check  or  :full
 # ═══════════════════════════════════════════════════════════════════════════════
 
-const SUBJECT_ID = "S5"
+const SUBJECT_ID = "S4"
 const RANDOM_SEED = 20260616
 const FORCE_REFIT = true         # true = ignore saved CSV and refit everything
 const RESUME_PARTIAL = true       # true = skip (fraction, rep) rows already in CSV

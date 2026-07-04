@@ -1,11 +1,11 @@
-# Stratified bootstrap for MIS+LBA: dual-cue-only vs full (all cue) datasets.
-# Copied from mis_lba_basic_bootstrap.jl; adds a data_scope dimension.
+# Bootstrap MIS+LBA at 100% trials: dual-cue-only vs all-cue datasets.
+# Each scope gets N bootstrap resamples (with replacement, stratified by condition).
 #
 # Run:  julia mis_lba_cue_scope_bootstrap.jl
 #
 # Switch mode on ONE line below:
-#   RUN_MODE = :check  ->  smoke test (~8 fits, seconds)
-#   RUN_MODE = :full   ->  production (~1500 fits, ~2 h for one subject)
+#   RUN_MODE = :check  ->  smoke test (4 fits, seconds)
+#   RUN_MODE = :full   ->  production (300 fits, ~20 min for one subject)
 #
 # Re-run safely: results CSV is appended/resumed; set FORCE_REFIT=true to start over.
 
@@ -17,7 +17,7 @@ using Random, Printf, Dates
 const RUN_MODE = :full   # :check  or  :full
 # ═══════════════════════════════════════════════════════════════════════════════
 
-const SUBJECT_ID = "S5"
+const SUBJECT_ID = "S3"
 const RANDOM_SEED = 20260616
 const FORCE_REFIT = true
 const RESUME_PARTIAL = true
@@ -25,11 +25,10 @@ const SAVE_EVERY = 10
 const OPT_OPTIONS = Optim.Options(g_tol=1e-4, x_abstol=1e-6, f_reltol=1e-8, iterations=10_000)
 
 const RUN_TAG = RUN_MODE == :check ? "check" : "full"
-const TRIAL_FRACTIONS = RUN_MODE == :check ? [0.25, 1.00] : [0.10, 0.25, 0.50, 0.75, 1.00]
 const N_BOOTSTRAP_REPS = RUN_MODE == :check ? 2 : 150
 const PROGRESS_PCT_STEP = RUN_MODE == :check ? 25.0 : 1.0
 
-# Fit on each scope; compare dual-cue trials only vs all single+dual trials.
+# Compare dual-cue trials only vs all single+dual trials (always 100% bootstrap).
 const DATA_SCOPES = [:dual_cue_only, :full]
 
 @assert RUN_MODE in (:check, :full) "RUN_MODE must be :check or :full"
@@ -57,7 +56,7 @@ const PARAM_COLS = [:theta, :omega0, :CI, :A, :k, :t0]
 const PARAM_LABELS = ["theta", "omega0", "CI", "A", "k", "t0"]
 
 const OUT_DIR = joinpath(@__DIR__, "figs", "figs_jun16", "bootstrap")
-const RESULTS_CSV = joinpath(OUT_DIR, "ccp001_$(lowercase(SUBJECT_ID))_cue_scope_bootstrap_params_$(RUN_TAG).csv")
+const RESULTS_CSV = joinpath(OUT_DIR, "ccp001_$(lowercase(SUBJECT_ID))_cue_compare_bootstrap_params_$(RUN_TAG).csv")
 const PLOT_SCRIPT = joinpath(@__DIR__, "plot_ccp001_cue_scope_bootstrap_density.jl")
 
 const DATA_SCOPE_LABELS = Dict(
@@ -199,35 +198,22 @@ end
 function stratified_sample!(
     out_idx::Vector{Int},
     data::DataFrame,
-    fraction::Float64,
     rep::Int,
     scope::Symbol,
-    rng::AbstractRNG
 )
     empty!(out_idx)
-    frac_label = round(Int, 100 * fraction)
     scope_tag = data_scope_label(scope)
     for cond in sort(unique(data.CueCondition))
         cond_idx = findall(data.CueCondition .== cond)
         n_c = length(cond_idx)
         n_c == 0 && continue
-        cond_seed = hash((SUBJECT_ID, scope_tag, frac_label, rep, cond, RANDOM_SEED))
+        cond_seed = hash((SUBJECT_ID, scope_tag, rep, cond, RANDOM_SEED))
         cond_rng = MersenneTwister(cond_seed)
-        if fraction >= 1.0 - 1e-9
-            draw = rand(cond_rng, cond_idx, n_c)
-        else
-            n_take = max(1, floor(Int, n_c * fraction))
-            n_take = min(n_take, n_c)
-            draw = cond_idx[randperm(cond_rng, n_c)[1:n_take]]
-        end
+        draw = rand(cond_rng, cond_idx, n_c)
         append!(out_idx, draw)
     end
     sort!(out_idx)
     out_idx
-end
-
-function fraction_label(fraction::Float64)::String
-    "$(round(Int, 100 * fraction))pct"
 end
 
 # --- Model building / fitting ---
@@ -415,7 +401,7 @@ end
 # --- Results I/O ---
 
 function expected_total_fits()::Int
-    length(DATA_SCOPES) * length(TRIAL_FRACTIONS) * N_BOOTSTRAP_REPS
+    length(DATA_SCOPES) * N_BOOTSTRAP_REPS
 end
 
 function load_existing_results(path::String)::DataFrame
@@ -423,8 +409,6 @@ function load_existing_results(path::String)::DataFrame
         return DataFrame(
             subject_id = String[],
             data_scope = String[],
-            trial_fraction = Float64[],
-            fraction_label = String[],
             rep = Int[],
             n_trials = Int[],
             theta = Float64[],
@@ -440,35 +424,28 @@ function load_existing_results(path::String)::DataFrame
     end
     df = CSV.read(path, DataFrame)
     col_names = Symbol.(names(df))
-    required = [:subject_id, :data_scope, :trial_fraction, :rep, :theta, :omega0, :CI, :A, :k, :t0]
+    required = [:subject_id, :data_scope, :rep, :theta, :omega0, :CI, :A, :k, :t0]
     for col in required
         col in col_names || error("Existing results missing column $(col): $(path)")
     end
     df
 end
 
-function result_done(existing::DataFrame, scope::Symbol, fraction::Float64, rep::Int)::Bool
+function result_done(existing::DataFrame, scope::Symbol, rep::Int)::Bool
     scope_tag = data_scope_label(scope)
     !isempty(existing) &&
-        any(
-            (existing.data_scope .== scope_tag) .&
-            (existing.trial_fraction .≈ fraction) .&
-            (existing.rep .== rep)
-        )
+        any((existing.data_scope .== scope_tag) .& (existing.rep .== rep))
 end
 
 function append_result_row!(
     rows::Vector{NamedTuple},
     scope::Symbol,
-    fraction::Float64,
     rep::Int,
     fit
 )
     push!(rows, (
         subject_id = SUBJECT_ID,
         data_scope = data_scope_label(scope),
-        trial_fraction = fraction,
-        fraction_label = fraction_label(fraction),
         rep = rep,
         n_trials = fit.n_trials,
         theta = fit.theta,
@@ -487,7 +464,7 @@ function save_results!(path::String, existing::DataFrame, new_rows::Vector{Named
     isempty(new_rows) && return existing
     new_df = DataFrame(new_rows)
     combined = isempty(existing) ? new_df : vcat(existing, new_df; cols=:union)
-    sort!(combined, [:data_scope, :trial_fraction, :rep])
+    sort!(combined, [:data_scope, :rep])
     CSV.write(path, combined)
     combined
 end
@@ -509,7 +486,7 @@ function run_bootstrap()
 
     total_fits = expected_total_fits()
     println("=" ^ 72)
-    println("CCP001 MIS+LBA cue-scope bootstrap (dual-cue vs all cues)")
+    println("CCP001 MIS+LBA cue compare bootstrap (dual-cue vs all cues, 100%)")
     println("=" ^ 72)
     println("RUN_MODE:       ", RUN_MODE, "  (tag=", RUN_TAG, ")")
     println("Subject:        ", SUBJECT_ID)
@@ -526,8 +503,7 @@ function run_bootstrap()
         )
     end
     println("Data scopes:    ", [data_scope_label(s) for s in DATA_SCOPES])
-    println("Fractions:      ", TRIAL_FRACTIONS)
-    println("Reps/fraction:  ", N_BOOTSTRAP_REPS)
+    println("Bootstrap reps: ", N_BOOTSTRAP_REPS, " per scope (100% resample)")
     println("Total fits:     ", total_fits)
     println("Progress step:  ", PROGRESS_PCT_STEP, "%")
     println("Results CSV:    ", RESULTS_CSV)
@@ -536,7 +512,7 @@ function run_bootstrap()
         println("NOTE: check mode — only ", total_fits, " fits to verify CSV + plots.")
     else
         est_min = round(Int, total_fits * 4 / 60)
-        println("NOTE: full mode — expect ~", est_min, "–", est_min + 30, " min for this subject.")
+        println("NOTE: full mode — expect ~", est_min, "–", est_min + 10, " min for this subject.")
     end
     println("=" ^ 72)
 
@@ -556,7 +532,6 @@ function run_bootstrap()
         println("Resuming: ", nrow(existing), " fits already saved.")
     end
 
-    rng = MersenneTwister(RANDOM_SEED)
     sample_idx = Int[]
     tracker = ProgressTracker(total_fits, PROGRESS_PCT_STEP)
     tracker.done = nrow(existing)
@@ -573,26 +548,23 @@ function run_bootstrap()
     for scope in DATA_SCOPES
         scope_df = scope_data[scope]
         println("=== Data scope: ", data_scope_label(scope), " (", nrow(scope_df), " trials) ===")
-        for fraction in TRIAL_FRACTIONS
-            println("--- Trial fraction: ", fraction_label(fraction), " ($(fraction)) ---")
-            for rep in 1:N_BOOTSTRAP_REPS
-                if RESUME_PARTIAL && result_done(existing, scope, fraction, rep)
-                    continue
-                end
-
-                stratified_sample!(sample_idx, scope_df, fraction, rep, scope, rng)
-                sub_data = scope_df[sample_idx, :]
-                fit = fit_subset(sub_data)
-
-                append_result_row!(batch_rows, scope, fraction, rep, fit)
-                if length(batch_rows) >= SAVE_EVERY
-                    existing = save_results!(RESULTS_CSV, existing, batch_rows)
-                    append!(new_rows, batch_rows)
-                    empty!(batch_rows)
-                end
-
-                tick!(tracker)
+        for rep in 1:N_BOOTSTRAP_REPS
+            if RESUME_PARTIAL && result_done(existing, scope, rep)
+                continue
             end
+
+            stratified_sample!(sample_idx, scope_df, rep, scope)
+            sub_data = scope_df[sample_idx, :]
+            fit = fit_subset(sub_data)
+
+            append_result_row!(batch_rows, scope, rep, fit)
+            if length(batch_rows) >= SAVE_EVERY
+                existing = save_results!(RESULTS_CSV, existing, batch_rows)
+                append!(new_rows, batch_rows)
+                empty!(batch_rows)
+            end
+
+            tick!(tracker)
         end
     end
 
@@ -607,25 +579,20 @@ function run_bootstrap()
 end
 
 function summarize_bootstrap_results(results::DataFrame)
-    println("\n--- Cue-scope bootstrap summary ---")
+    println("\n--- Cue compare bootstrap summary ---")
     med_elapsed = median(results.elapsed_sec)
     println("Median fit time: ", round(med_elapsed, digits=3), " s")
     if med_elapsed < 0.1
         println("WARNING: median fit time < 0.1 s — fits may not be re-optimizing properly.")
     end
     for scope in sort(unique(results.data_scope))
-        sub_scope = results[results.data_scope .== scope, :]
-        println("Scope ", scope, ":")
-        for f in sort(unique(sub_scope.trial_fraction))
-            sub = sub_scope[sub_scope.trial_fraction .≈ f, :]
-            println(
-                "  ",
-                fraction_label(f),
-                ": theta unique=", length(unique(sub.theta)),
-                ", t0 unique=", length(unique(sub.t0)),
-                ", mean elapsed=", round(mean(sub.elapsed_sec), digits=3), "s"
-            )
-        end
+        sub = results[results.data_scope .== scope, :]
+        println(
+            "Scope ", scope,
+            ": theta unique=", length(unique(sub.theta)),
+            ", t0 unique=", length(unique(sub.t0)),
+            ", mean elapsed=", round(mean(sub.elapsed_sec), digits=3), "s"
+        )
     end
 end
 
