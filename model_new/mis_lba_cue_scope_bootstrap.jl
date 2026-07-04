@@ -14,10 +14,10 @@ using Random, Printf, Dates
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CHANGE THIS ONE LINE to switch check vs full run:
-const RUN_MODE = :check   # :check  or  :full
+const RUN_MODE = :full   # :check  or  :full
 # ═══════════════════════════════════════════════════════════════════════════════
 
-const SUBJECT_ID = "S2"
+const SUBJECT_ID = "S5"
 const RANDOM_SEED = 20260616
 const FORCE_REFIT = true
 const RESUME_PARTIAL = true
