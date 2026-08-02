@@ -4,7 +4,11 @@
 # Copied from mis_lba_basic.jl and adapted to fit several subjects in one run.
 # Run:  julia mis_lba_basic_multisub.jl
 
+# Save plots to files only (do not open a display window).
+ENV["GKSwstype"] = "nul"
+
 using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Random
+default(show = false)
 
 # =============================================================================
 # CONFIG (change these)
@@ -13,7 +17,7 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Rando
 # Which subjects to fit. Example: 1:10 or 8:11
 # Only folders named exactly "subN" are used (ignore sub1star, sub2*, etc.).
 # Subjects with fewer than MIN_N_SESSIONS trial files are skipped (likely testing).
-subject_range = 9:11
+subject_range = 12:20
 MIN_N_SESSIONS = 10
 
 # Probability model:
@@ -26,7 +30,7 @@ epsilon = 0.05
 # false -> classic MIS: w = exp(theta * r / r_max) for r>0, and omega0 when r==0
 # true  -> free weights: omega1..omega4 for cue values 1..4, and omega0 when r==0
 #         (no theta / no exponential)
-free_omega_by_cue_value = false
+free_omega_by_cue_value = true
 
 # LBA cue-number config (all false = one shared CI, k, t0 for all trials)
 vary_CI_by_cue_number = false
