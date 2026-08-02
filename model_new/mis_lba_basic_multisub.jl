@@ -3,6 +3,16 @@
 #
 # Copied from mis_lba_basic.jl and adapted to fit several subjects in one run.
 # Run:  julia mis_lba_basic_multisub.jl
+# Or:   julia mis_lba_basic_multisub.jl subs=12:14 omega=freeW k=competitor
+#
+# CLI key=value map (optional; missing keys keep the defaults below):
+#   subs=12:20          subject range
+#   omega=freeW|expW    free omega1..4  vs  exponential MIS (theta)
+#   k=shared|cueN|competitor|delta_r|conflict
+#                       shared k | split by cue number | functional k rules
+#   CI=shared|cueN      shared CI | split by cue number
+#   t0=shared|cueN      shared t0 | split by cue number
+#   nsims=100           number of predictive simulations
 
 # Save plots to files only (do not open a display window).
 ENV["GKSwstype"] = "nul"
@@ -11,7 +21,7 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Rando
 default(show = false)
 
 # =============================================================================
-# CONFIG (change these)
+# CONFIG (change these) — CLI args override these when provided
 # =============================================================================
 
 # Which subjects to fit. Example: 1:10 or 8:11
@@ -37,6 +47,15 @@ vary_CI_by_cue_number = false
 vary_k_by_cue_number = false
 vary_t0_by_cue_number = false
 
+# Functional threshold (k) rule. Only allowed when vary_k_by_cue_number == false.
+# :none       -> one shared k (same as before)
+# :competitor -> k = k0 + beta_k * C,   C = lower (competitor) reward; 0 if single cue
+# :delta_r    -> k = k0 + beta_k * ΔR,  ΔR = H - L; 0 if single cue
+# :conflict   -> k = k0 + beta_k * conflict, conflict = 3 - (H - L) on dual cues
+#                (closer rewards => higher conflict); 0 if single cue
+# Only two threshold params (k0, beta_k) instead of one free k per condition.
+k_functional = :competitor
+
 # How many simulated datasets to build prediction means + 95% intervals
 n_pred_sims = 100
 RANDOM_SEED = 20260801
@@ -46,8 +65,86 @@ MIN_SESSION = 6
 # Drop unrealistically fast RTs (milliseconds). Same idea as other lab scripts.
 MIN_RT_MS = 100.0
 
-# Figure output folder
+# Output folders
 fig_dir = joinpath(@__DIR__, "figs", "fit_aug1")
+pred_dir = joinpath(@__DIR__, "data_prediction")
+
+# =============================================================================
+# Optional CLI overrides (key=value). No args -> keep defaults above.
+# =============================================================================
+function parse_subject_range(s::AbstractString)
+    s = strip(s)
+    if occursin(":", s)
+        a, b = split(s, ":"; limit=2)
+        return parse(Int, a):parse(Int, b)
+    else
+        n = parse(Int, s)
+        return n:n
+    end
+end
+
+function apply_cli_args!()
+    isempty(ARGS) && return
+    println("CLI args: ", join(ARGS, " "))
+    for arg in ARGS
+        occursin("=", arg) || error("Bad CLI arg '$(arg)'. Use key=value.")
+        key, val = split(arg, "="; limit=2)
+        key = lowercase(strip(key))
+        val = lowercase(strip(val))
+        if key == "subs"
+            global subject_range = parse_subject_range(val)
+        elseif key == "omega"
+            if val in ("freew", "free")
+                global free_omega_by_cue_value = true
+            elseif val in ("expw", "exp")
+                global free_omega_by_cue_value = false
+            else
+                error("omega must be freeW or expW, got: $(val)")
+            end
+        elseif key == "k"
+            if val == "shared"
+                global vary_k_by_cue_number = false
+                global k_functional = :none
+            elseif val in ("cuen", "cue_number", "varyk")
+                global vary_k_by_cue_number = true
+                global k_functional = :none
+            elseif val in ("competitor", "comp", "kcomp")
+                global vary_k_by_cue_number = false
+                global k_functional = :competitor
+            elseif val in ("delta_r", "deltar", "kdelta")
+                global vary_k_by_cue_number = false
+                global k_functional = :delta_r
+            elseif val in ("conflict", "kconflict")
+                global vary_k_by_cue_number = false
+                global k_functional = :conflict
+            else
+                error("k must be shared|cueN|competitor|delta_r|conflict, got: $(val)")
+            end
+        elseif key == "ci"
+            if val == "shared"
+                global vary_CI_by_cue_number = false
+            elseif val in ("cuen", "cue_number")
+                global vary_CI_by_cue_number = true
+            else
+                error("CI must be shared or cueN, got: $(val)")
+            end
+        elseif key == "t0"
+            if val == "shared"
+                global vary_t0_by_cue_number = false
+            elseif val in ("cuen", "cue_number")
+                global vary_t0_by_cue_number = true
+            else
+                error("t0 must be shared or cueN, got: $(val)")
+            end
+        elseif key == "nsims"
+            global n_pred_sims = parse(Int, val)
+        else
+            error("Unknown CLI key '$(key)'. See map at top of file.")
+        end
+    end
+end
+
+apply_cli_args!()
 
 # =============================================================================
 # Checks
@@ -55,6 +152,8 @@ fig_dir = joinpath(@__DIR__, "figs", "fit_aug1")
 @assert prob_model in (:original, :noise_model)
 @assert 0.0 <= epsilon <= 1.0
 @assert n_pred_sims >= 20
+@assert k_functional in (:none, :competitor, :delta_r, :conflict) "k_functional must be :none, :competitor, :delta_r, or :conflict."
+@assert !(vary_k_by_cue_number && k_functional != :none) "Cannot use k_functional with vary_k_by_cue_number. Set one or the other."
 
 lab_data_root = joinpath(
     @__DIR__, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab"
@@ -264,9 +363,57 @@ function load_subject_data(subj_dir)
     return DataFrame(rows)
 end
 
-# Short tag used in saved figure names
-function omega_mode_tag()
-    return free_omega_by_cue_value ? "freeW" : "expW"
+# Short tag used in saved figure names, e.g. freeW, freeW_varyK, freeW_kDeltaR
+function fig_mode_tag()
+    tag = free_omega_by_cue_value ? "freeW" : "expW"
+    extras = String[]
+    vary_CI_by_cue_number && push!(extras, "varyCI")
+    if vary_k_by_cue_number
+        push!(extras, "varyK")
+    elseif k_functional == :competitor
+        push!(extras, "kComp")
+    elseif k_functional == :delta_r
+        push!(extras, "kDeltaR")
+    elseif k_functional == :conflict
+        push!(extras, "kConflict")
+    end
+    vary_t0_by_cue_number && push!(extras, "varyT0")
+    if !isempty(extras)
+        tag = tag * "_" * join(extras, "_")
+    end
+    return tag
+end
+
+# Feature used by k_functional (0 on single-cue trials)
+function k_feature(rewards)
+    nonzero = filter(>(0), rewards)
+    length(nonzero) < 2 && return 0.0
+    H = maximum(nonzero)
+    L = minimum(nonzero)
+    if k_functional == :competitor
+        return Float64(L)
+    elseif k_functional == :delta_r
+        return Float64(H - L)
+    elseif k_functional == :conflict
+        # Closer competitors => higher conflict. Max gap in this design is 3.
+        return Float64(3 - (H - L))
+    else
+        return 0.0
+    end
+end
+
+# Resolve trial threshold gap k from the current config
+function trial_k(x, layout, rewards, cue_key)
+    if vary_k_by_cue_number
+        # Original split: one k for single-cue, one k for dual-cue
+        return x[layout.idx_k[cue_key]]
+    elseif k_functional != :none
+        # Functional rule: k = k0 + beta_k * feature
+        return x[layout.idx_k0] + x[layout.idx_beta_k] * k_feature(rewards)
+    else
+        # Shared k for all trials
+        return x[layout.idx_k[:all]]
+    end
 end
 
 # Softmax-like choice probabilities from rewards
@@ -330,11 +477,31 @@ function build_param_layout(t0_upper)
     push!(names, "A"); push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
     idx_A = length(names)
 
+    # Threshold (k) parameters
     idx_k = Dict{Symbol, Int}()
-    for key in (vary_k_by_cue_number ? [:single, :multi] : [:all])
-        push!(names, "k_$(key)")
+    idx_k0 = 0
+    idx_beta_k = 0
+    if vary_k_by_cue_number
+        # Separate k for one-cue vs two-cue trials
+        for key in [:single, :multi]
+            push!(names, "k_$(key)")
+            push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
+            idx_k[key] = length(names)
+        end
+    elseif k_functional != :none
+        # Functional: k = k0 + beta_k * feature
+        push!(names, "k0")
         push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
-        idx_k[key] = length(names)
+        idx_k0 = length(names)
+        push!(names, "beta_k")
+        # beta can be negative (stronger competitor / more conflict => lower threshold)
+        push!(lower, -5.0); push!(upper, 5.0); push!(x0, 0.0)
+        idx_beta_k = length(names)
+    else
+        # One shared k
+        push!(names, "k_all")
+        push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
+        idx_k[:all] = length(names)
     end
 
     idx_t0 = Dict{Symbol, Int}()
@@ -355,6 +522,8 @@ function build_param_layout(t0_upper)
         idx_CI = idx_CI,
         idx_A = idx_A,
         idx_k = idx_k,
+        idx_k0 = idx_k0,
+        idx_beta_k = idx_beta_k,
         idx_t0 = idx_t0
     )
 end
@@ -368,9 +537,9 @@ function neg_loglik(x, trial_rewards, chosen_idx, rt_sec, cue_type, r_max, layou
     for i in eachindex(trial_rewards)
         cue_key = cue_type[i]
         CI = x[layout.idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
-        k = x[layout.idx_k[vary_k_by_cue_number ? cue_key : :all]]
+        k = trial_k(x, layout, trial_rewards[i], cue_key)
         t0 = x[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
-        rt_sec[i] <= t0 && return Inf
+        (k <= 0 || rt_sec[i] <= t0) && return Inf
 
         p = choice_probs(trial_rewards[i], x, layout, r_max)
         lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
@@ -473,8 +642,10 @@ function simulate_once(trial_rewards, cue_type, r_max, best, layout, rng)
     for i in 1:n
         cue_key = cue_type[i]
         CI = best[layout.idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
-        k = best[layout.idx_k[vary_k_by_cue_number ? cue_key : :all]]
+        k = trial_k(best, layout, trial_rewards[i], cue_key)
         t0 = best[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
+        # Keep k positive for sampling (same guard as in the likelihood)
+        k = max(k, 1e-6)
         p = choice_probs(trial_rewards[i], best, layout, r_max)
         lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
         sample = rand(rng, lba)
@@ -642,54 +813,104 @@ function make_rt_panel(conditions, data_mat, pred_mean, pred_lo, pred_hi, title_
     return p
 end
 
-# Make the 2x2 figure for one subject and save it
-function save_subject_figure(sub_num, data, fit_out, fig_dir)
-    # Accuracy / RT for single-cue and dual-cue conditions
-    single_present = [cc for cc in single_cue_conditions if cc in Set(string.(data.CueCondition))]
-    dual_present = [cc for cc in dual_cue_conditions if cc in Set(string.(data.CueCondition))]
+# Build one long table of observed + predicted summaries for CSV / compare plots
+function build_prediction_table(sub_num, data, fit_out)
+    mode = fig_mode_tag()
+    rows = NamedTuple[]
 
-    data_acc_single = observed_accuracy_by_condition(data, fit_out.trial_rewards, single_present)
-    data_acc_dual = observed_accuracy_by_condition(data, fit_out.trial_rewards, dual_present)
-    data_rt_single = observed_rt_quantiles_by_condition(data, fit_out.rt_sec, single_present, rt_quantiles)
-    data_rt_dual = observed_rt_quantiles_by_condition(data, fit_out.rt_sec, dual_present, rt_quantiles)
+    for (group_name, cond_list) in (
+        ("single", single_cue_conditions),
+        ("dual", dual_cue_conditions),
+    )
+        conditions = [cc for cc in cond_list if cc in Set(string.(data.CueCondition))]
+        isempty(conditions) && continue
 
-    pred_single = predictive_summaries(data, fit_out, single_present, rt_quantiles, n_pred_sims, MersenneTwister(RANDOM_SEED + sub_num))
-    pred_dual = predictive_summaries(data, fit_out, dual_present, rt_quantiles, n_pred_sims, MersenneTwister(RANDOM_SEED + 1000 + sub_num))
+        data_acc = observed_accuracy_by_condition(data, fit_out.trial_rewards, conditions)
+        data_rt = observed_rt_quantiles_by_condition(data, fit_out.rt_sec, conditions, rt_quantiles)
+        seed = group_name == "single" ? RANDOM_SEED + sub_num : RANDOM_SEED + 1000 + sub_num
+        pred = predictive_summaries(data, fit_out, conditions, rt_quantiles, n_pred_sims, MersenneTwister(seed))
 
-    p_acc_single = make_accuracy_panel(
-        single_present, data_acc_single,
-        pred_single.acc_mean, pred_single.acc_lo, pred_single.acc_hi,
-        "Single-cue accuracy"
+        for (j, cc) in enumerate(conditions)
+            push!(rows, (
+                subject = sub_num,
+                mode_tag = mode,
+                cue_group = group_name,
+                condition = cc,
+                data_acc = data_acc[j],
+                pred_acc = pred.acc_mean[j],
+                pred_acc_lo = pred.acc_lo[j],
+                pred_acc_hi = pred.acc_hi[j],
+                data_rt10 = data_rt[j, 1],
+                data_rt50 = data_rt[j, 2],
+                data_rt90 = data_rt[j, 3],
+                pred_rt10 = pred.rtq_mean[j, 1],
+                pred_rt10_lo = pred.rtq_lo[j, 1],
+                pred_rt10_hi = pred.rtq_hi[j, 1],
+                pred_rt50 = pred.rtq_mean[j, 2],
+                pred_rt50_lo = pred.rtq_lo[j, 2],
+                pred_rt50_hi = pred.rtq_hi[j, 2],
+                pred_rt90 = pred.rtq_mean[j, 3],
+                pred_rt90_lo = pred.rtq_lo[j, 3],
+                pred_rt90_hi = pred.rtq_hi[j, 3],
+                nll = fit_out.nll,
+            ))
+        end
+    end
+    return DataFrame(rows)
+end
+
+# Make the 2x2 figure for one subject and save prediction CSV
+function save_subject_figure(sub_num, data, fit_out, fig_dir, pred_dir)
+    pred_table = build_prediction_table(sub_num, data, fit_out)
+    mode = fig_mode_tag()
+
+    isdir(pred_dir) || mkpath(pred_dir)
+    pred_path = joinpath(pred_dir, "sub$(sub_num)_mis_lba_$(mode)_pred.csv")
+    CSV.write(pred_path, pred_table)
+    println("Saved prediction CSV: ", pred_path)
+
+    function rows_for(group)
+        return filter(r -> r.cue_group == group, pred_table)
+    end
+
+    function panel_from_rows(df_g, title_acc, title_rt)
+        conditions = String.(df_g.condition)
+        data_acc = Float64.(df_g.data_acc)
+        pred_acc = Float64.(df_g.pred_acc)
+        pred_acc_lo = Float64.(df_g.pred_acc_lo)
+        pred_acc_hi = Float64.(df_g.pred_acc_hi)
+
+        data_rt = hcat(Float64.(df_g.data_rt10), Float64.(df_g.data_rt50), Float64.(df_g.data_rt90))
+        pred_rt = hcat(Float64.(df_g.pred_rt10), Float64.(df_g.pred_rt50), Float64.(df_g.pred_rt90))
+        pred_rt_lo = hcat(Float64.(df_g.pred_rt10_lo), Float64.(df_g.pred_rt50_lo), Float64.(df_g.pred_rt90_lo))
+        pred_rt_hi = hcat(Float64.(df_g.pred_rt10_hi), Float64.(df_g.pred_rt50_hi), Float64.(df_g.pred_rt90_hi))
+
+        p_acc = make_accuracy_panel(conditions, data_acc, pred_acc, pred_acc_lo, pred_acc_hi, title_acc)
+        p_rt = make_rt_panel(conditions, data_rt, pred_rt, pred_rt_lo, pred_rt_hi, title_rt)
+        return p_acc, p_rt
+    end
+
+    df_single = rows_for("single")
+    df_dual = rows_for("dual")
+    p_acc_single, p_rt_single = panel_from_rows(
+        df_single, "Single-cue accuracy", "Single-cue RT quantiles (0.1/0.5/0.9)"
     )
-    p_acc_dual = make_accuracy_panel(
-        dual_present, data_acc_dual,
-        pred_dual.acc_mean, pred_dual.acc_lo, pred_dual.acc_hi,
-        "Dual-cue accuracy"
-    )
-    p_rt_single = make_rt_panel(
-        single_present, data_rt_single,
-        pred_single.rtq_mean, pred_single.rtq_lo, pred_single.rtq_hi,
-        "Single-cue RT quantiles (0.1/0.5/0.9)"
-    )
-    p_rt_dual = make_rt_panel(
-        dual_present, data_rt_dual,
-        pred_dual.rtq_mean, pred_dual.rtq_lo, pred_dual.rtq_hi,
-        "Dual-cue RT quantiles (0.1/0.5/0.9)"
+    p_acc_dual, p_rt_dual = panel_from_rows(
+        df_dual, "Dual-cue accuracy", "Dual-cue RT quantiles (0.1/0.5/0.9)"
     )
 
     fig = plot(
         p_acc_single, p_acc_dual, p_rt_single, p_rt_dual;
         layout = (2, 2),
         size = (1100, 800),
-        plot_title = "sub$(sub_num)  |  $(omega_mode_tag())  |  white=data, black=prediction (95% CI)"
+        plot_title = "sub$(sub_num)  |  $(mode)  |  white=data, black=prediction (95% CI)"
     )
 
     isdir(fig_dir) || mkpath(fig_dir)
-    # Example names: sub8_mis_lba_expW.png  or  sub8_mis_lba_freeW.png
-    fig_path = joinpath(fig_dir, "sub$(sub_num)_mis_lba_$(omega_mode_tag()).png")
+    fig_path = joinpath(fig_dir, "sub$(sub_num)_mis_lba_$(mode).png")
     savefig(fig, fig_path)
     println("Saved figure: ", fig_path)
-    return fig_path
+    return fig_path, pred_path
 end
 
 # =============================================================================
@@ -697,9 +918,10 @@ end
 # =============================================================================
 println("Lab data root: ", lab_data_root)
 println("Subject range requested: ", subject_range)
-println("free_omega_by_cue_value = ", free_omega_by_cue_value, "  (tag=", omega_mode_tag(), ")")
+println("free_omega_by_cue_value = ", free_omega_by_cue_value, "  (tag=", fig_mode_tag(), ")")
 println("vary_CI_by_cue_number = ", vary_CI_by_cue_number)
 println("vary_k_by_cue_number = ", vary_k_by_cue_number)
+println("k_functional = ", k_functional)
 println("vary_t0_by_cue_number = ", vary_t0_by_cue_number)
 println("prob_model = ", prob_model)
 
@@ -708,6 +930,7 @@ subjects = find_subjects_to_fit(lab_data_root, subject_range, MIN_N_SESSIONS)
 println("Subjects to fit: ", subjects)
 
 isdir(fig_dir) || mkpath(fig_dir)
+isdir(pred_dir) || mkpath(pred_dir)
 
 for sub_num in subjects
     println("="^60)
@@ -734,15 +957,23 @@ for sub_num in subjects
     for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
         println("CI_$(key) = ", round(best[layout.idx_CI[key]], digits=4))
     end
-    for key in (vary_k_by_cue_number ? [:single, :multi] : [:all])
-        println("k_$(key) = ", round(best[layout.idx_k[key]], digits=4))
+    if vary_k_by_cue_number
+        for key in [:single, :multi]
+            println("k_$(key) = ", round(best[layout.idx_k[key]], digits=4))
+        end
+    elseif k_functional != :none
+        println("k0 = ", round(best[layout.idx_k0], digits=4))
+        println("beta_k = ", round(best[layout.idx_beta_k], digits=4))
+    else
+        println("k_all = ", round(best[layout.idx_k[:all]], digits=4))
     end
     for key in (vary_t0_by_cue_number ? [:single, :multi] : [:all])
         println("t0_$(key) = ", round(best[layout.idx_t0[key]], digits=4))
     end
 
-    save_subject_figure(sub_num, data, fit_out, fig_dir)
+    save_subject_figure(sub_num, data, fit_out, fig_dir, pred_dir)
 end
 
 println("="^60)
 println("Done. Figures are in: ", fig_dir)
+println("Prediction CSVs are in: ", pred_dir)
