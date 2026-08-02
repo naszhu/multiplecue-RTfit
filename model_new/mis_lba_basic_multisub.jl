@@ -13,14 +13,20 @@ using CSV, DataFrames, Statistics, Optim, Plots, SequentialSamplingModels, Rando
 # Which subjects to fit. Example: 1:10 or 8:11
 # Only folders named exactly "subN" are used (ignore sub1star, sub2*, etc.).
 # Subjects with fewer than MIN_N_SESSIONS trial files are skipped (likely testing).
-subject_range = 8:11
+subject_range = 9:11
 MIN_N_SESSIONS = 10
 
 # Probability model:
-# :original    -> P(i) = exp(theta*r_i) / sum_j exp(theta*r_j)
+# :original    -> P(i) = w_i / sum_j w_j
 # :noise_model -> P(i) = (1-epsilon)*softmax_i + epsilon*(1/4)
 prob_model = :original
 epsilon = 0.05
+
+# How option weights are built from cue values:
+# false -> classic MIS: w = exp(theta * r / r_max) for r>0, and omega0 when r==0
+# true  -> free weights: omega1..omega4 for cue values 1..4, and omega0 when r==0
+#         (no theta / no exponential)
+free_omega_by_cue_value = false
 
 # LBA cue-number config (all false = one shared CI, k, t0 for all trials)
 vary_CI_by_cue_number = false
@@ -254,9 +260,28 @@ function load_subject_data(subj_dir)
     return DataFrame(rows)
 end
 
+# Short tag used in saved figure names
+function omega_mode_tag()
+    return free_omega_by_cue_value ? "freeW" : "expW"
+end
+
 # Softmax-like choice probabilities from rewards
-function choice_probs(rewards, theta, omega0, r_max)
-    w = [rv == 0 ? omega0 : exp(theta * rv / r_max) for rv in rewards]
+# x = full parameter vector; layout tells where omega / theta live
+function choice_probs(rewards, x, layout, r_max)
+    omega0 = x[layout.idx_omega0]
+    w = Vector{Float64}(undef, length(rewards))
+    for (j, rv) in enumerate(rewards)
+        if rv == 0
+            w[j] = omega0
+        elseif free_omega_by_cue_value
+            # Free weight for cue values 1, 2, 3, 4
+            w[j] = x[layout.idx_omega[rv]]
+        else
+            # Classic MIS exponential weight
+            theta = x[layout.idx_theta]
+            w[j] = exp(theta * rv / r_max)
+        end
+    end
     p = w ./ sum(w)
     if prob_model == :noise_model
         p = (1 - epsilon) .* p .+ epsilon .* (1 / 4)
@@ -271,8 +296,25 @@ function build_param_layout(t0_upper)
     upper = Float64[]
     x0 = Float64[]
 
-    push!(names, "theta"); push!(lower, 0.0); push!(upper, 30.0); push!(x0, 1.0)
+    idx_theta = 0
+    idx_omega = Dict{Int, Int}()
+
+    if free_omega_by_cue_value
+        # Free omega1..omega4 (no theta)
+        for v in 1:4
+            push!(names, "omega$(v)")
+            push!(lower, 1e-6); push!(upper, 50.0); push!(x0, Float64(v))
+            idx_omega[v] = length(names)
+        end
+    else
+        # Classic MIS: one theta
+        push!(names, "theta"); push!(lower, 0.0); push!(upper, 30.0); push!(x0, 1.0)
+        idx_theta = length(names)
+    end
+
+    # Weight for zero-reward options (used in both modes)
     push!(names, "omega0"); push!(lower, 1e-6); push!(upper, 50.0); push!(x0, 0.1)
+    idx_omega0 = length(names)
 
     idx_CI = Dict{Symbol, Int}()
     for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
@@ -303,6 +345,9 @@ function build_param_layout(t0_upper)
         lower = lower,
         upper = upper,
         x0 = x0,
+        idx_theta = idx_theta,
+        idx_omega0 = idx_omega0,
+        idx_omega = idx_omega,
         idx_CI = idx_CI,
         idx_A = idx_A,
         idx_k = idx_k,
@@ -312,8 +357,6 @@ end
 
 # Negative log-likelihood for one subject
 function neg_loglik(x, trial_rewards, chosen_idx, rt_sec, cue_type, r_max, layout)
-    theta = x[1]
-    omega0 = x[2]
     A = x[layout.idx_A]
     nll = 0.0
     eps_val = 1e-12
@@ -325,7 +368,7 @@ function neg_loglik(x, trial_rewards, chosen_idx, rt_sec, cue_type, r_max, layou
         t0 = x[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
         rt_sec[i] <= t0 && return Inf
 
-        p = choice_probs(trial_rewards[i], theta, omega0, r_max)
+        p = choice_probs(trial_rewards[i], x, layout, r_max)
         lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
         lik = try
             pdf(lba, (choice = chosen_idx[i], rt = rt_sec[i]))
@@ -421,8 +464,6 @@ function simulate_once(trial_rewards, cue_type, r_max, best, layout, rng)
     sim_choice = Vector{Int}(undef, n)
     sim_rt = Vector{Float64}(undef, n)
 
-    theta = best[1]
-    omega0 = best[2]
     A = best[layout.idx_A]
 
     for i in 1:n
@@ -430,7 +471,7 @@ function simulate_once(trial_rewards, cue_type, r_max, best, layout, rng)
         CI = best[layout.idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
         k = best[layout.idx_k[vary_k_by_cue_number ? cue_key : :all]]
         t0 = best[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
-        p = choice_probs(trial_rewards[i], theta, omega0, r_max)
+        p = choice_probs(trial_rewards[i], best, layout, r_max)
         lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
         sample = rand(rng, lba)
         sim_choice[i] = sample.choice
@@ -636,11 +677,12 @@ function save_subject_figure(sub_num, data, fit_out, fig_dir)
         p_acc_single, p_acc_dual, p_rt_single, p_rt_dual;
         layout = (2, 2),
         size = (1100, 800),
-        plot_title = "sub$(sub_num)  |  white=data, black=prediction (95% CI)"
+        plot_title = "sub$(sub_num)  |  $(omega_mode_tag())  |  white=data, black=prediction (95% CI)"
     )
 
     isdir(fig_dir) || mkpath(fig_dir)
-    fig_path = joinpath(fig_dir, "sub$(sub_num)_mis_lba_fit.png")
+    # Example names: sub8_mis_lba_expW.png  or  sub8_mis_lba_freeW.png
+    fig_path = joinpath(fig_dir, "sub$(sub_num)_mis_lba_$(omega_mode_tag()).png")
     savefig(fig, fig_path)
     println("Saved figure: ", fig_path)
     return fig_path
@@ -651,6 +693,7 @@ end
 # =============================================================================
 println("Lab data root: ", lab_data_root)
 println("Subject range requested: ", subject_range)
+println("free_omega_by_cue_value = ", free_omega_by_cue_value, "  (tag=", omega_mode_tag(), ")")
 println("vary_CI_by_cue_number = ", vary_CI_by_cue_number)
 println("vary_k_by_cue_number = ", vary_k_by_cue_number)
 println("vary_t0_by_cue_number = ", vary_t0_by_cue_number)
@@ -675,8 +718,14 @@ for sub_num in subjects
     layout = fit_out.layout
 
     println("NLL: ", round(fit_out.nll, digits=2))
-    println("theta = ", round(best[1], digits=4))
-    println("omega0 = ", round(best[2], digits=6))
+    if free_omega_by_cue_value
+        for v in 1:4
+            println("omega$(v) = ", round(best[layout.idx_omega[v]], digits=4))
+        end
+    else
+        println("theta = ", round(best[layout.idx_theta], digits=4))
+    end
+    println("omega0 = ", round(best[layout.idx_omega0], digits=6))
     println("A = ", round(best[layout.idx_A], digits=4))
     for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
         println("CI_$(key) = ", round(best[layout.idx_CI[key]], digits=4))
