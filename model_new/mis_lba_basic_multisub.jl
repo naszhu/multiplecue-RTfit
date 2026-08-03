@@ -926,7 +926,10 @@ println("vary_t0_by_cue_number = ", vary_t0_by_cue_number)
 println("prob_model = ", prob_model)
 
 subjects = find_subjects_to_fit(lab_data_root, subject_range, MIN_N_SESSIONS)
-@assert !isempty(subjects) "No valid subjects found in range $(subject_range)."
+if isempty(subjects)
+    println("WARNING: No valid subjects found in range $(subject_range). Nothing to do.")
+    exit(0)
+end
 println("Subjects to fit: ", subjects)
 
 isdir(fig_dir) || mkpath(fig_dir)

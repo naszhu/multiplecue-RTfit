@@ -39,7 +39,7 @@ default(show = false)
 # =============================================================================
 
 # Subjects to compare
-subject_range = 8:11
+subject_range = 16:28
 
 # Two modes to overlay (CLI args passed to mis_lba_basic_multisub.jl)
 # Options:
@@ -49,7 +49,7 @@ subject_range = 8:11
 #   t0:    shared | cueN
 #
 # Default request: freeW + k by cue number  vs  freeW + k by competitor
-mode_a_args = ["omega=freeW", "k=cueN", "CI=shared", "t0=shared"]
+mode_a_args = ["omega=freeW", "k=competitor", "CI=shared", "t0=shared"]
 mode_b_args = ["omega=freeW", "k=delta_r", "CI=shared", "t0=shared"]
 
 # Colors: black = data, two colors = the two predictions
@@ -141,21 +141,63 @@ end
 mode_a_label = mode_label_from_args(mode_a_args)
 mode_b_label = mode_label_from_args(mode_b_args)
 
+# Same data / session rules as mis_lba_basic_multisub.jl
+lab_data_root = joinpath(model_dir, "..", "..", "multiplecue-responsebox", "exp", "data_from_lab")
+MIN_N_SESSIONS = 10
+
+function list_trial_csvs(subj_dir)
+    files = readdir(subj_dir; join=true)
+    out = String[]
+    for f in files
+        name = basename(f)
+        if endswith(name, "_trials.csv")
+            push!(out, f)
+        elseif endswith(name, ".csv") && !occursin("metadata", name)
+            push!(out, f)
+        end
+    end
+    return out
+end
+
+# true if this subject folder exists and has enough session files
+function subject_is_usable(sub_num::Int)
+    subj_dir = joinpath(lab_data_root, "sub$(sub_num)")
+    if !isdir(subj_dir)
+        println("  skip sub$(sub_num): folder not found")
+        return false
+    end
+    n_sessions = length(list_trial_csvs(subj_dir))
+    if n_sessions < MIN_N_SESSIONS
+        println("  skip sub$(sub_num): only $(n_sessions) session files (< $(MIN_N_SESSIONS))")
+        return false
+    end
+    return true
+end
+
 function pred_csv_path(sub_num::Int, mode_tag::String)
     return joinpath(pred_dir, "sub$(sub_num)_mis_lba_$(mode_tag)_pred.csv")
 end
 
+# Returns CSV path, or nothing if the subject/mode cannot be fit
 function ensure_prediction!(sub_num::Int, mode_args::Vector{String}, mode_tag::String)
     path = pred_csv_path(sub_num, mode_tag)
     if isfile(path) && !force_refit
         println("  cache hit: ", basename(path))
         return path
     end
+
     println("  fitting (no cache): sub$(sub_num)  tag=$(mode_tag)")
     cmd_args = String["subs=$(sub_num)", mode_args..., extra_fit_args...]
-    # Run the fitter as a separate process so its globals/CLI stay isolated
-    run(`julia $(fit_script) $(cmd_args)`)
-    @assert isfile(path) "Expected prediction CSV was not created: $(path)"
+    try
+        run(`julia $(fit_script) $(cmd_args)`)
+    catch err
+        println("  skip sub$(sub_num) tag=$(mode_tag): fit failed ($(typeof(err)))")
+        return nothing
+    end
+    if !isfile(path)
+        println("  skip sub$(sub_num) tag=$(mode_tag): prediction CSV was not created")
+        return nothing
+    end
     return path
 end
 
@@ -317,8 +359,16 @@ for sub_num in collect(subject_range)
     println("="^60)
     println("Subject sub$(sub_num)")
 
+    if !subject_is_usable(sub_num)
+        continue
+    end
+
     path_a = ensure_prediction!(sub_num, mode_a_args, tag_a)
     path_b = ensure_prediction!(sub_num, mode_b_args, tag_b)
+    if path_a === nothing || path_b === nothing
+        println("  skip sub$(sub_num): missing prediction for one or both modes")
+        continue
+    end
 
     df_a = load_pred(path_a)
     df_b = load_pred(path_b)
