@@ -859,6 +859,51 @@ function build_prediction_table(sub_num, data, fit_out)
     return DataFrame(rows)
 end
 
+# Trial-level posterior predictive sims (for RT-bin competitor-cost overlays in R).
+# One full replication of the observed design, repeated n_pred_sims times.
+function build_simtrials_table(sub_num, data, fit_out; n_sims::Int = n_pred_sims)
+    mode = fig_mode_tag()
+    rng = MersenneTwister(RANDOM_SEED + 777 + sub_num)
+    rows = NamedTuple[]
+
+    for rep in 1:n_sims
+        sim_choice, sim_rt = simulate_once(
+            fit_out.trial_rewards, fit_out.cue_type, fit_out.r_max,
+            fit_out.best, fit_out.layout, rng
+        )
+        for i in 1:nrow(data)
+            r = fit_out.trial_rewards[i]
+            ch = sim_choice[i]
+            best_reward = maximum(r)
+            chose_high = ch in findall(==(best_reward), r) ? 1 : 0
+            cue_resp_val = r[ch]
+            # Rank among unique positive rewards (1 = highest)
+            pos = sort(unique(filter(>(0), r)); rev=true)
+            cue_rank = 99
+            if cue_resp_val > 0
+                found = findfirst(==(cue_resp_val), pos)
+                if found !== nothing
+                    cue_rank = found
+                end
+            end
+
+            push!(rows, (
+                subject = sub_num,
+                mode_tag = mode,
+                SimRep = rep,
+                CueCondition = string(data.CueCondition[i]),
+                CueValues = string(data.CueValues[i]),
+                Choice = ch,
+                RT_ms = sim_rt[i] * 1000,
+                CueResponseValue = cue_resp_val,
+                CueRankResponse = cue_rank,
+                ACC = chose_high,
+            ))
+        end
+    end
+    return DataFrame(rows)
+end
+
 # Make the 2x2 figure for one subject and save prediction CSV
 function save_subject_figure(sub_num, data, fit_out, fig_dir, pred_dir)
     pred_table = build_prediction_table(sub_num, data, fit_out)
@@ -868,6 +913,13 @@ function save_subject_figure(sub_num, data, fit_out, fig_dir, pred_dir)
     pred_path = joinpath(pred_dir, "sub$(sub_num)_mis_lba_$(mode)_pred.csv")
     CSV.write(pred_path, pred_table)
     println("Saved prediction CSV: ", pred_path)
+
+    # Trial-level sims for competitor-cost RT-bin overlays
+    n_sim_reps = min(n_pred_sims, 40)
+    sim_table = build_simtrials_table(sub_num, data, fit_out; n_sims = n_sim_reps)
+    sim_path = joinpath(pred_dir, "sub$(sub_num)_mis_lba_$(mode)_simtrials.csv")
+    CSV.write(sim_path, sim_table)
+    println("Saved sim-trials CSV: ", sim_path, " (reps=", n_sim_reps, ")")
 
     function rows_for(group)
         return filter(r -> r.cue_group == group, pred_table)
