@@ -10,7 +10,8 @@
 #   omega=freeW|expW    free omega1..4  vs  exponential MIS (theta)
 #   k=shared|cueN|competitor|delta_r|conflict
 #                       shared k | split by cue number | functional k rules
-#   CI=shared|cueN      shared CI | split by cue number
+#   CI=shared|cueN      shared v0/alpha | split by cue number
+#                       (legacy key name; drifts are v_i = v0 + alpha * p_i)
 #   t0=shared|cueN      shared t0 | split by cue number
 #   nsims=100           number of predictive simulations
 
@@ -27,7 +28,7 @@ default(show = false)
 # Which subjects to fit. Example: 1:10 or 8:11
 # Only folders named exactly "subN" are used (ignore sub1star, sub2*, etc.).
 # Subjects with fewer than MIN_N_SESSIONS trial files are skipped (likely testing).
-subject_range = 12:20
+subject_range = 19:19
 MIN_N_SESSIONS = 10
 
 # Probability model:
@@ -40,9 +41,10 @@ epsilon = 0.05
 # false -> classic MIS: w = exp(theta * r / r_max) for r>0, and omega0 when r==0
 # true  -> free weights: omega1..omega4 for cue values 1..4, and omega0 when r==0
 #         (no theta / no exponential)
-free_omega_by_cue_value = true
+free_omega_by_cue_value = false
 
-# LBA cue-number config (all false = one shared CI, k, t0 for all trials)
+# LBA drift map: v_i = v0 + alpha * p_i  (p = MIS choice probs)
+# vary_CI_by_cue_number splits v0/alpha by single vs multi (legacy flag name).
 vary_CI_by_cue_number = false
 vary_k_by_cue_number = false
 vary_t0_by_cue_number = false
@@ -54,7 +56,7 @@ vary_t0_by_cue_number = false
 # :conflict   -> k = k0 + beta_k * conflict, conflict = 3 - (H - L) on dual cues
 #                (closer rewards => higher conflict); 0 if single cue
 # Only two threshold params (k0, beta_k) instead of one free k per condition.
-k_functional = :competitor
+k_functional = :delta_r
 
 # How many simulated datasets to build prediction means + 95% intervals
 n_pred_sims = 100
@@ -66,7 +68,7 @@ MIN_SESSION = 6
 MIN_RT_MS = 100.0
 
 # Output folders
-fig_dir = joinpath(@__DIR__, "figs", "fit_aug1")
+fig_dir = joinpath(@__DIR__, "figs", "fit_aug20")
 pred_dir = joinpath(@__DIR__, "data_prediction")
 
 # =============================================================================
@@ -363,10 +365,10 @@ function load_subject_data(subj_dir)
     return DataFrame(rows)
 end
 
-# Short tag used in saved figure names, e.g. freeW, freeW_varyK, freeW_kDeltaR
+# Short tag used in saved figure names, e.g. freeW_v0a_kDeltaR, expW_v0a_kDeltaR
 function fig_mode_tag()
     tag = free_omega_by_cue_value ? "freeW" : "expW"
-    extras = String[]
+    extras = String["v0a"]  # drifts = v0 + alpha * p (not CI * p)
     vary_CI_by_cue_number && push!(extras, "varyCI")
     if vary_k_by_cue_number
         push!(extras, "varyK")
@@ -378,9 +380,7 @@ function fig_mode_tag()
         push!(extras, "kConflict")
     end
     vary_t0_by_cue_number && push!(extras, "varyT0")
-    if !isempty(extras)
-        tag = tag * "_" * join(extras, "_")
-    end
+    tag = tag * "_" * join(extras, "_")
     return tag
 end
 
@@ -467,11 +467,16 @@ function build_param_layout(t0_upper)
     push!(names, "omega0"); push!(lower, 1e-6); push!(upper, 50.0); push!(x0, 0.1)
     idx_omega0 = length(names)
 
-    idx_CI = Dict{Symbol, Int}()
+    # Drift map: v_i = v0 + alpha * p_i  (replaces old CI * p)
+    idx_v0 = Dict{Symbol, Int}()
+    idx_alpha = Dict{Symbol, Int}()
     for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
-        push!(names, "CI_$(key)")
-        push!(lower, 0.01); push!(upper, 100.0); push!(x0, 5.0)
-        idx_CI[key] = length(names)
+        push!(names, "v0_$(key)")
+        push!(lower, 1e-6); push!(upper, 10.0); push!(x0, 0.1)
+        idx_v0[key] = length(names)
+        push!(names, "alpha_$(key)")
+        push!(lower, 1e-6); push!(upper, 100.0); push!(x0, 5.0)
+        idx_alpha[key] = length(names)
     end
 
     push!(names, "A"); push!(lower, 0.001); push!(upper, 5.0); push!(x0, 0.3)
@@ -519,13 +524,22 @@ function build_param_layout(t0_upper)
         idx_theta = idx_theta,
         idx_omega0 = idx_omega0,
         idx_omega = idx_omega,
-        idx_CI = idx_CI,
+        idx_v0 = idx_v0,
+        idx_alpha = idx_alpha,
         idx_A = idx_A,
         idx_k = idx_k,
         idx_k0 = idx_k0,
         idx_beta_k = idx_beta_k,
         idx_t0 = idx_t0
     )
+end
+
+# LBA drifts from MIS probs: v_i = v0 + alpha * p_i
+function drift_rates(p, x, layout, cue_key)
+    key = vary_CI_by_cue_number ? cue_key : :all
+    v0 = x[layout.idx_v0[key]]
+    alpha = x[layout.idx_alpha[key]]
+    return v0 .+ alpha .* p
 end
 
 # Negative log-likelihood for one subject
@@ -536,13 +550,14 @@ function neg_loglik(x, trial_rewards, chosen_idx, rt_sec, cue_type, r_max, layou
 
     for i in eachindex(trial_rewards)
         cue_key = cue_type[i]
-        CI = x[layout.idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
         k = trial_k(x, layout, trial_rewards[i], cue_key)
         t0 = x[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
         (k <= 0 || rt_sec[i] <= t0) && return Inf
 
         p = choice_probs(trial_rewards[i], x, layout, r_max)
-        lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
+        nu = drift_rates(p, x, layout, cue_key)
+        any(<=(0), nu) && return Inf
+        lba = LBA(ν = nu, A = A, k = k, τ = t0)
         lik = try
             pdf(lba, (choice = chosen_idx[i], rt = rt_sec[i]))
         catch
@@ -641,13 +656,14 @@ function simulate_once(trial_rewards, cue_type, r_max, best, layout, rng)
 
     for i in 1:n
         cue_key = cue_type[i]
-        CI = best[layout.idx_CI[vary_CI_by_cue_number ? cue_key : :all]]
         k = trial_k(best, layout, trial_rewards[i], cue_key)
         t0 = best[layout.idx_t0[vary_t0_by_cue_number ? cue_key : :all]]
         # Keep k positive for sampling (same guard as in the likelihood)
         k = max(k, 1e-6)
         p = choice_probs(trial_rewards[i], best, layout, r_max)
-        lba = LBA(ν = CI .* p, A = A, k = k, τ = t0)
+        nu = drift_rates(p, best, layout, cue_key)
+        nu = max.(nu, 1e-6)
+        lba = LBA(ν = nu, A = A, k = k, τ = t0)
         sample = rand(rng, lba)
         sim_choice[i] = sample.choice
         sim_rt[i] = sample.rt
@@ -1010,7 +1026,8 @@ for sub_num in subjects
     println("omega0 = ", round(best[layout.idx_omega0], digits=6))
     println("A = ", round(best[layout.idx_A], digits=4))
     for key in (vary_CI_by_cue_number ? [:single, :multi] : [:all])
-        println("CI_$(key) = ", round(best[layout.idx_CI[key]], digits=4))
+        println("v0_$(key) = ", round(best[layout.idx_v0[key]], digits=4))
+        println("alpha_$(key) = ", round(best[layout.idx_alpha[key]], digits=4))
     end
     if vary_k_by_cue_number
         for key in [:single, :multi]
