@@ -24,9 +24,10 @@
 #
 # File-name tags produced by multisub (for CSV lookup):
 #   freeW / expW
+#   + _v0a                                      (drifts = v0 + alpha * p)
 #   + _varyK | _kComp | _kDeltaR | _kConflict   (from k=)
 #   + _varyCI / _varyT0                         (if CI/t0 = cueN)
-#   Example: freeW_varyK , freeW_kComp
+#   Example: freeW_v0a_kDeltaR , expW_v0a_kDeltaR
 # =============================================================================
 
 ENV["GKSwstype"] = "nul"
@@ -39,7 +40,7 @@ default(show = false)
 # =============================================================================
 
 # Subjects to compare
-subject_range = 16:28
+subject_range = 19:19
 
 # Two modes to overlay (CLI args passed to mis_lba_basic_multisub.jl)
 # Options:
@@ -48,9 +49,9 @@ subject_range = 16:28
 #   CI:    shared | cueN
 #   t0:    shared | cueN
 #
-# Default request: freeW + k by cue number  vs  freeW + k by competitor
-mode_a_args = ["omega=freeW", "k=competitor", "CI=shared", "t0=shared"]
-mode_b_args = ["omega=freeW", "k=delta_r", "CI=shared", "t0=shared"]
+# Match the original freeW_kDeltaR vs expW_kDeltaR compare plot
+mode_a_args = ["omega=freeW", "k=delta_r", "CI=shared", "t0=shared"]
+mode_b_args = ["omega=expW", "k=delta_r", "CI=shared", "t0=shared"]
 
 # Colors: black = data, two colors = the two predictions
 color_data = :black
@@ -58,7 +59,7 @@ color_a = :steelblue
 color_b = :darkorange
 
 # If true, re-run fits even when prediction CSV already exists
-force_refit = false
+force_refit = true
 
 # Extra CLI passed when fitting (e.g. fewer sims for a quick test)
 extra_fit_args = String[]   # e.g. ["nsims=50"]
@@ -67,7 +68,7 @@ extra_fit_args = String[]   # e.g. ["nsims=50"]
 model_dir = @__DIR__
 fit_script = joinpath(model_dir, "mis_lba_basic_multisub.jl")
 pred_dir = joinpath(model_dir, "data_prediction")
-fig_dir = joinpath(model_dir, "figs", "fit_aug1")
+fig_dir = joinpath(model_dir, "figs", "fit_aug20")
 
 # =============================================================================
 # Helpers: turn CLI args into the same mode tag multisub uses in filenames
@@ -117,7 +118,7 @@ function mode_tag_from_args(args::Vector{String})
     t0 = get_arg(args, "t0", "shared")
 
     tag = startswith(omega, "free") ? "freeW" : "expW"
-    extras = String[]
+    extras = String["v0a"]  # must match fig_mode_tag() in multisub
     if ci in ("cuen", "cue_number")
         push!(extras, "varyCI")
     end
@@ -133,7 +134,7 @@ function mode_tag_from_args(args::Vector{String})
     if t0 in ("cuen", "cue_number")
         push!(extras, "varyT0")
     end
-    isempty(extras) || (tag = tag * "_" * join(extras, "_"))
+    tag = tag * "_" * join(extras, "_")
     return tag
 end
 
